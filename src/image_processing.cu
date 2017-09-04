@@ -22,22 +22,25 @@ __global__ void img_resize_cuda( unsigned char *p_out_u08, unsigned char *p_in_u
     int iCount_s32 = blockIdx.x * blockDim.x + threadIdx.x;
     int jCount_s32 = blockIdx.y * blockDim.y + threadIdx.y;
 
-    p_out_u08[iCount_s32 * 4 + jCount_s32 * 4 * 800 * 4] = p_in_u08[iCount_s32 + jCount_s32 * 800];
-    p_out_u08[iCount_s32 * 4 + 1 + jCount_s32 * 4 * 800 * 4] = p_in_u08[iCount_s32 + jCount_s32 * 800];
-    p_out_u08[iCount_s32 * 4 + 2 + jCount_s32 * 4 * 800 * 4] = p_in_u08[iCount_s32 + jCount_s32 * 800];
-    p_out_u08[iCount_s32 * 4 + 3 + jCount_s32 * 4 * 800 * 4] = p_in_u08[iCount_s32 + jCount_s32 * 800];
-    p_out_u08[iCount_s32 * 4 + (jCount_s32 * 4 + 1) * 800 * 4] = p_in_u08[iCount_s32 + jCount_s32 * 800];
-    p_out_u08[iCount_s32 * 4 + 1 + (jCount_s32 * 4 + 1) * 800 * 4] = p_in_u08[iCount_s32 + jCount_s32 * 800];
-    p_out_u08[iCount_s32 * 4 + 2 + (jCount_s32 * 4 + 1) * 800 * 4] = p_in_u08[iCount_s32 + jCount_s32 * 800];
-    p_out_u08[iCount_s32 * 4 + 3 + (jCount_s32 * 4 + 1) * 800 * 4] = p_in_u08[iCount_s32 + jCount_s32 * 800];
-    p_out_u08[iCount_s32 * 4 + (jCount_s32 * 4  + 2) * 800 * 4] = p_in_u08[iCount_s32 + jCount_s32 * 800];
-    p_out_u08[iCount_s32 * 4 + 1 + (jCount_s32 * 4 + 2) * 800 * 4] = p_in_u08[iCount_s32 + jCount_s32 * 800];
-    p_out_u08[iCount_s32 * 4 + 2 + (jCount_s32 * 4 + 2) * 800 * 4] = p_in_u08[iCount_s32 + jCount_s32 * 800];
-    p_out_u08[iCount_s32 * 4 + 3 + (jCount_s32 * 4 + 2) * 800 * 4] = p_in_u08[iCount_s32 + jCount_s32 * 800];
-    p_out_u08[iCount_s32 * 4 + (jCount_s32 * 4 + 3) * 800 * 4] = p_in_u08[iCount_s32 + jCount_s32 * 800];
-    p_out_u08[iCount_s32 * 4 + 1 + (jCount_s32 * 4 + 3) * 800 * 4] = p_in_u08[iCount_s32 + jCount_s32 * 800];
-    p_out_u08[iCount_s32 * 4 + 2 + (jCount_s32 * 4 + 3) * 800 * 4] = p_in_u08[iCount_s32 + jCount_s32 * 800];
-    p_out_u08[iCount_s32 * 4 + 3 + (jCount_s32 * 4 + 3) * 800 * 4] = p_in_u08[iCount_s32 + jCount_s32 * 800];
+    if( (iCount_s32 < 800) && (jCount_s32 < 600) )
+    {
+        p_out_u08[iCount_s32 * 4 + jCount_s32 * 4 * 800 * 4] = p_in_u08[iCount_s32 + jCount_s32 * 800];
+        p_out_u08[iCount_s32 * 4 + 1 + jCount_s32 * 4 * 800 * 4] = p_in_u08[iCount_s32 + jCount_s32 * 800];
+        p_out_u08[iCount_s32 * 4 + 2 + jCount_s32 * 4 * 800 * 4] = p_in_u08[iCount_s32 + jCount_s32 * 800];
+        p_out_u08[iCount_s32 * 4 + 3 + jCount_s32 * 4 * 800 * 4] = p_in_u08[iCount_s32 + jCount_s32 * 800];
+        p_out_u08[iCount_s32 * 4 + (jCount_s32 * 4 + 1) * 800 * 4] = p_in_u08[iCount_s32 + jCount_s32 * 800];
+        p_out_u08[iCount_s32 * 4 + 1 + (jCount_s32 * 4 + 1) * 800 * 4] = p_in_u08[iCount_s32 + jCount_s32 * 800];
+        p_out_u08[iCount_s32 * 4 + 2 + (jCount_s32 * 4 + 1) * 800 * 4] = p_in_u08[iCount_s32 + jCount_s32 * 800];
+        p_out_u08[iCount_s32 * 4 + 3 + (jCount_s32 * 4 + 1) * 800 * 4] = p_in_u08[iCount_s32 + jCount_s32 * 800];
+        p_out_u08[iCount_s32 * 4 + (jCount_s32 * 4  + 2) * 800 * 4] = p_in_u08[iCount_s32 + jCount_s32 * 800];
+        p_out_u08[iCount_s32 * 4 + 1 + (jCount_s32 * 4 + 2) * 800 * 4] = p_in_u08[iCount_s32 + jCount_s32 * 800];
+        p_out_u08[iCount_s32 * 4 + 2 + (jCount_s32 * 4 + 2) * 800 * 4] = p_in_u08[iCount_s32 + jCount_s32 * 800];
+        p_out_u08[iCount_s32 * 4 + 3 + (jCount_s32 * 4 + 2) * 800 * 4] = p_in_u08[iCount_s32 + jCount_s32 * 800];
+        p_out_u08[iCount_s32 * 4 + (jCount_s32 * 4 + 3) * 800 * 4] = p_in_u08[iCount_s32 + jCount_s32 * 800];
+        p_out_u08[iCount_s32 * 4 + 1 + (jCount_s32 * 4 + 3) * 800 * 4] = p_in_u08[iCount_s32 + jCount_s32 * 800];
+        p_out_u08[iCount_s32 * 4 + 2 + (jCount_s32 * 4 + 3) * 800 * 4] = p_in_u08[iCount_s32 + jCount_s32 * 800];
+        p_out_u08[iCount_s32 * 4 + 3 + (jCount_s32 * 4 + 3) * 800 * 4] = p_in_u08[iCount_s32 + jCount_s32 * 800];
+    }
 }
 
 __global__ void gradient_magnitude_cuda( unsigned char *p_out_u08, unsigned char *p_in_u08 )
@@ -47,10 +50,13 @@ __global__ void gradient_magnitude_cuda( unsigned char *p_out_u08, unsigned char
 
     unsigned char gx_u08, gy_u08;    
 
-    gx_u08 = abs(p_in_u08[iCount_s32 + 1 + jCount_s32 * 3200] - p_in_u08[iCount_s32 - 1 + jCount_s32 * 3200]);
-    gy_u08 = abs(p_in_u08[iCount_s32 + (jCount_s32 + 1) * 3200] - p_in_u08[iCount_s32 + (jCount_s32 - 1) * 3200]);
+    if( (iCount_s32 < 3200) && (jCount_s32 < 2400) )
+    {
+        gx_u08 = abs(p_in_u08[iCount_s32 + 1 + jCount_s32 * 3200] - p_in_u08[iCount_s32 - 1 + jCount_s32 * 3200]);
+        gy_u08 = abs(p_in_u08[iCount_s32 + (jCount_s32 + 1) * 3200] - p_in_u08[iCount_s32 + (jCount_s32 - 1) * 3200]);
 
-    p_out_u08[iCount_s32 + jCount_s32 * 3200] = gx_u08 + gy_u08;
+        p_out_u08[iCount_s32 + jCount_s32 * 3200] = gx_u08 + gy_u08;
+    }
 }
 
 
@@ -69,8 +75,10 @@ int main(void)
     unsigned char *p_image_inter_u08;
     unsigned char *p_image_out_u08;
 
-    dim3 grid_img_resize( 800, 600 );
-    dim3 grid_gradient_magnitude( 3200, 2400 );
+    dim3 grid_img_resize( 32, 8 );
+    dim3 grid_numblocks_resize( 800 / grid_img_resize.x, 600 / grid_img_resize.y );
+    dim3 grid_gradient_magnitude( 64, 16 );
+    dim3 grid_numblocks_gradient( 3200 / grid_gradient_magnitude.x, 2400 / grid_gradient_magnitude.y);
 
     unsigned int iCount_u32, jCount_u32;
 
@@ -149,8 +157,8 @@ int main(void)
     time_sum = clock();
     for( iCount_u32 = 0; iCount_u32 < ITER_COUNT; iCount_u32++ )
     {
-        img_resize_cuda<<<grid_img_resize, 1>>>( p_image_inter_u08, p_image_in_u08 );
-        gradient_magnitude_cuda<<<grid_gradient_magnitude, 1>>>( p_image_out_u08, p_image_inter_u08 );
+        img_resize_cuda<<<grid_numblocks_resize, grid_img_resize>>>( p_image_inter_u08, p_image_in_u08 );
+        gradient_magnitude_cuda<<<grid_numblocks_gradient, grid_gradient_magnitude>>>( p_image_out_u08, p_image_inter_u08 );
         cudaMemcpy( image_out.data, p_image_out_u08, 800 * 600 * 4 * 4 * sizeof(unsigned char), cudaMemcpyDeviceToHost );
     }
     time_sum = clock() - time_init;
