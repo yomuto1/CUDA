@@ -5,8 +5,9 @@
 
 #include <time.h>
 #include <math.h>
+#include <stdio.h>
 
-#define ITER_COUNT (100)
+#define ITER_COUNT (5)
 
 using namespace cv;
 using namespace std;
@@ -58,6 +59,8 @@ int main(void)
     Mat image_in;
     static unsigned char sa_image_inter_u08[3200 * 2400];
     Mat image_out;
+    static unsigned char sa_image_out_natC_u08[3200 * 2400];
+    static unsigned char sa_image_out_CUDA_u08[3200 * 2400];
 
     clock_t time_init;
     clock_t time_sum = 0;
@@ -69,7 +72,7 @@ int main(void)
     dim3 grid_img_resize( 800, 600 );
     dim3 grid_gradient_magnitude( 3200, 2400 );
 
-    unsigned int iCount_u32;
+    unsigned int iCount_u32, jCount_u32;
 
     time_init = clock();
     time_init = clock() - time_init;
@@ -113,6 +116,8 @@ int main(void)
 
     cout <<  "LINEAR upscaling to 4x by CPU natC " << (float)time_sum / CLOCKS_PER_SEC << std::endl;
 
+    memcpy(sa_image_out_natC_u08, image_out.data, 3200 * 2400 * sizeof(unsigned char));
+
     imwrite( "../../../Pictures/out_img_1_opencv_natC.png", image_out );
 
     memset(sa_image_inter_u08, 0, 800 * 600 * 4 * 4 * sizeof(unsigned char));
@@ -154,7 +159,20 @@ int main(void)
 
     cout <<  "LINEAR upscaling to 4x by GPU CUDA " << (float)time_sum / CLOCKS_PER_SEC << std::endl;
 
+    memcpy(sa_image_out_CUDA_u08, image_out.data, 3200 * 2400 * sizeof(unsigned char));
+
     imwrite( "../../../Pictures/out_img_1_GPU_CUDA.png", image_out );
+
+    for( jCount_u32 = 1; jCount_u32 < 2400 - 1; jCount_u32++ )
+    {
+        for( iCount_u32 = 1; iCount_u32 < 3200 - 1; iCount_u32++ )
+        {
+            if( sa_image_out_natC_u08[iCount_u32 + jCount_u32 * 3200] != sa_image_out_CUDA_u08[iCount_u32 + jCount_u32 * 3200] )
+            {
+                printf("not matched: (%d, %d), %d, %d\n", iCount_u32, jCount_u32, sa_image_out_natC_u08[iCount_u32 + jCount_u32 * 3200], sa_image_out_CUDA_u08[iCount_u32 + jCount_u32 * 3200]);
+            }
+        }
+    }
 
     cudaFree( p_image_in_u08 );
     cudaFree( p_image_inter_u08 );
