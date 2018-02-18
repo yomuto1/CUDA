@@ -31,6 +31,10 @@ static void im2col_gpu(float *im, int channels, int height, int width, int ksize
 static void gemm_gpu(int TA, int TB, int M, int N, int K, float ALPHA, float *A_gpu, int lda, float *B_gpu, int ldb, float BETA, float *C_gpu, int ldc);
 static cublasHandle_t blas_handle();
 static int cuda_get_device();
+static void normalize_gpu(float *x, float *mean, float *variance, int batch, int filters, int spatial);
+static void scale_bias_gpu(float *output, float *biases, int batch, int n, int size);
+static void add_bias_gpu(float *output, float *biases, int batch, int n, int size);
+static void activate_array_gpu(float *x, int n);
 
 int main(void)
 {
@@ -191,10 +195,69 @@ int main(void)
         }
     }
 #endif
-#if 0
-    forward_batchnorm_layer_gpu(l, net);
-    activate_array_gpu(l.output_gpu, l.outputs*l.batch, l.activation);
+
+#if 1
+    cudaMemcpy(sa_out_l00_f32, p_out_l00_f32, WID_L00 * HEI_L00 * CHN_L00 * sizeof(float), cudaMemcpyDeviceToHost);
+
+    printf("ans[0] = %f\n", sa_out_l00_f32[0]);
+    printf("ans[1] = %f\n", sa_out_l00_f32[1]);
+    printf("ans[608 * 50] = %f\n", sa_out_l00_f32[608 * 50]);
+    printf("ans[608 * 70] = %f\n", sa_out_l00_f32[608 * 70]);
+    printf("ans[608 * 70 + 1] = %f\n", sa_out_l00_f32[608 * 70 + 1]);
+    printf("ans[608 * 70 + 5] = %f\n", sa_out_l00_f32[608 * 70 + 5]);
+    printf("ans[608 * 70 + 11] = %f\n", sa_out_l00_f32[608 * 70 + 11]);
+    printf("ans[608 * 200 + 100] = %f\n", sa_out_l00_f32[608 * 200 + 100]);
 #endif
+
+    /* batch norm in layer 00 */
+    //copy_gpu(WID_L00 * HEI_L00, p_input_gpu_f32, 1, p_out_l00_f32, 1);
+    //copy_gpu(WID_L00 * HEI_L00, p_out_l00_f32, 1, l.x_gpu, 1);
+    normalize_gpu(p_out_l00_f32, p_mean_gpu_l00_f32, p_variance_gpu_l00_f32, 1, CHN_L00, HEI_L00 * WID_L00);
+    cudaMemcpy(sa_out_l00_f32, p_mean_gpu_l00_f32, CHN_L00 * sizeof(float), cudaMemcpyDeviceToHost);
+    printf("mean = ");
+    for(i = 0; i < CHN_L00; i++)
+    {
+        printf("%f ", sa_out_l00_f32[i]);
+    }
+    printf("\n");
+    cudaMemcpy(sa_out_l00_f32, p_variance_gpu_l00_f32, CHN_L00 * sizeof(float), cudaMemcpyDeviceToHost);
+    printf("var = ");
+    for(i = 0; i < CHN_L00; i++)
+    {
+        printf("%f ", sa_out_l00_f32[i]);
+    }
+    printf("\n");
+    cudaMemcpy(sa_out_l00_f32, p_out_l00_f32, WID_L00 * HEI_L00 * CHN_L00 * sizeof(float), cudaMemcpyDeviceToHost);
+    printf("2ans[0] = %f\n", sa_out_l00_f32[0]);
+    printf("2ans[1] = %f\n", sa_out_l00_f32[1]);
+    printf("2ans[608 * 50] = %f\n", sa_out_l00_f32[608 * 50]);
+    printf("2ans[608 * 70] = %f\n", sa_out_l00_f32[608 * 70]);
+    printf("2ans[608 * 70 + 1] = %f\n", sa_out_l00_f32[608 * 70 + 1]);
+    printf("2ans[608 * 70 + 5] = %f\n", sa_out_l00_f32[608 * 70 + 5]);
+    printf("2ans[608 * 70 + 11] = %f\n", sa_out_l00_f32[608 * 70 + 11]);
+    printf("2ans[608 * 200 + 100] = %f\n", sa_out_l00_f32[608 * 200 + 100]);
+    scale_bias_gpu(p_out_l00_f32, p_scale_gpu_l00_f32, 1, CHN_L00, HEI_L00 * WID_L00);
+    cudaMemcpy(sa_out_l00_f32, p_out_l00_f32, WID_L00 * HEI_L00 * CHN_L00 * sizeof(float), cudaMemcpyDeviceToHost);
+    printf("3ans[0] = %f\n", sa_out_l00_f32[0]);
+    printf("3ans[1] = %f\n", sa_out_l00_f32[1]);
+    printf("3ans[608 * 50] = %f\n", sa_out_l00_f32[608 * 50]);
+    printf("3ans[608 * 70] = %f\n", sa_out_l00_f32[608 * 70]);
+    printf("3ans[608 * 70 + 1] = %f\n", sa_out_l00_f32[608 * 70 + 1]);
+    printf("3ans[608 * 70 + 5] = %f\n", sa_out_l00_f32[608 * 70 + 5]);
+    printf("3ans[608 * 70 + 11] = %f\n", sa_out_l00_f32[608 * 70 + 11]);
+    printf("3ans[608 * 200 + 100] = %f\n", sa_out_l00_f32[608 * 200 + 100]);
+    add_bias_gpu(p_out_l00_f32, p_bias_gpu_l00_f32, 1, CHN_L00, HEI_L00 * WID_L00);
+    cudaMemcpy(sa_out_l00_f32, p_out_l00_f32, WID_L00 * HEI_L00 * CHN_L00 * sizeof(float), cudaMemcpyDeviceToHost);
+    printf("4ans[0] = %f\n", sa_out_l00_f32[0]);
+    printf("4ans[1] = %f\n", sa_out_l00_f32[1]);
+    printf("4ans[608 * 50] = %f\n", sa_out_l00_f32[608 * 50]);
+    printf("4ans[608 * 70] = %f\n", sa_out_l00_f32[608 * 70]);
+    printf("4ans[608 * 70 + 1] = %f\n", sa_out_l00_f32[608 * 70 + 1]);
+    printf("4ans[608 * 70 + 5] = %f\n", sa_out_l00_f32[608 * 70 + 5]);
+    printf("4ans[608 * 70 + 11] = %f\n", sa_out_l00_f32[608 * 70 + 11]);
+    printf("4ans[608 * 200 + 100] = %f\n", sa_out_l00_f32[608 * 200 + 100]);
+    activate_array_gpu(p_out_l00_f32, CHN_L00 * HEI_L00 * WID_L00); /* leaky */
+
     clk_end = clock();
     printf("l00 convolution: %f secs\n", (double)(clk_end - clk_srt) / CLOCKS_PER_SEC);
 
@@ -214,7 +277,7 @@ int main(void)
     cudaFree(p_workspace_f32);
 
     /* read ref data layer 0 */
-    fp = fopen("yolo_convolution_out_ref_c_608x608x32.bin", "rb");
+    fp = fopen("yolo_cpu_layer_0.bin", "rb");
     if(NULL == fp)
     {
         printf("read ref data l00 fopen error\n");
@@ -234,7 +297,7 @@ int main(void)
         {
             for(i = 0 + PAD_L00; i < WID_L00 - PAD_L00; i++)
             {
-                if(fabsf(sa_out_l00_f32[i + j * WID_L00 + k * WID_L00 * HEI_L00] - sa_ref_l00_f32[i + j * WID_L00 + k * WID_L00 * HEI_L00]) > 0.000001f)
+                if(fabsf(sa_out_l00_f32[i + j * WID_L00 + k * WID_L00 * HEI_L00] - sa_ref_l00_f32[i + j * WID_L00 + k * WID_L00 * HEI_L00]) > 0.001f)
                 {
                     printf("layer_0_f32 mismatch: w %d, h %d, c %d, out %f, GT %f\n", i, j, k, sa_out_l00_f32[i + j * WID_L00 + k * WID_L00 * HEI_L00], sa_ref_l00_f32[i + j * WID_L00 + k * WID_L00 * HEI_L00]);
                 }
@@ -379,3 +442,71 @@ static int cuda_get_device()
     return n;
 }
 
+__global__ void normalize_kernel(int N, float *x, float *mean, float *variance, int batch, int filters, int spatial)
+{
+    int index = (blockIdx.x + blockIdx.y*gridDim.x) * blockDim.x + threadIdx.x;
+    if (index >= N) return;
+    int f = (index/spatial)%filters;
+    
+    x[index] = (x[index] - mean[f])/(sqrtf(variance[f] + .00001f));
+}
+
+static void normalize_gpu(float *x, float *mean, float *variance, int batch, int filters, int spatial)
+{
+    size_t N = batch*filters*spatial;
+    normalize_kernel<<<cuda_gridsize(N), BLOCK>>>(N, x, mean, variance, batch, filters, spatial);
+    check_error(cudaPeekAtLastError());
+}
+
+__global__ void scale_bias_kernel(float *output, float *biases, int n, int size)
+{
+    int offset = blockIdx.x * blockDim.x + threadIdx.x;
+    int filter = blockIdx.y;
+    int batch = blockIdx.z;
+
+    if(offset < size) output[(batch*n+filter)*size + offset] *= biases[filter];
+}
+
+static void scale_bias_gpu(float *output, float *biases, int batch, int n, int size)
+{
+    dim3 dimGrid((size-1)/BLOCK + 1, n, batch);
+    dim3 dimBlock(BLOCK, 1, 1);
+
+    scale_bias_kernel<<<dimGrid, dimBlock>>>(output, biases, n, size);
+    check_error(cudaPeekAtLastError());
+}
+
+__global__ void add_bias_kernel(float *output, float *biases, int batch, int n, int size)
+{
+    int index = (blockIdx.x + blockIdx.y*gridDim.x) * blockDim.x + threadIdx.x;
+    if (index >= n*size*batch) return;
+    int i = index % size;
+    index /= size;
+    int j = index % n;
+    index /= n;
+    int k = index;
+
+    output[(k*n+j)*size + i] += biases[j];
+}
+
+static void add_bias_gpu(float *output, float *biases, int batch, int n, int size)
+{
+    int num = n*size*batch;
+
+    add_bias_kernel<<<cuda_gridsize(num), BLOCK>>>(output, biases, batch, n, size);
+    check_error(cudaPeekAtLastError());
+}
+
+__device__ float leaky_activate_kernel(float x){return (x>0) ? x : .1f*x;}
+
+__global__ void activate_array_kernel(float *x, int n)
+{
+    int i = (blockIdx.x + blockIdx.y*gridDim.x) * blockDim.x + threadIdx.x;
+    if(i < n) x[i] = leaky_activate_kernel(x[i]);
+}
+
+static void activate_array_gpu(float *x, int n) 
+{
+    activate_array_kernel<<<cuda_gridsize(n), BLOCK>>>(x, n);
+    check_error(cudaPeekAtLastError());
+}
