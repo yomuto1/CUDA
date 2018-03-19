@@ -59,6 +59,17 @@ static void scale_bias_gpu(float *output, float *biases, int batch, int n, int s
 static void add_bias_gpu(float *output, float *biases, int batch, int n, int size);
 static void activate_array_gpu(float *x, int n, ACTIVATION a);
 static void forward_maxpool_layer_gpu(float *l_output_gpu, float *input_gpu, int layer_out_w, int layer_out_h, int layer_batch, int layer_w, int layer_h, int layer_c, int layer_stride, int layer_size, int layer_pad);
+static void forward_route_layer_25_gpu(float *l_output_gpu, float *input_l16);
+static void forward_route_layer_28_gpu(float *l_output_gpu, float *input_l27, float *input_l24);
+static void copy_gpu(int N, float * X, int INCX, float * Y, int INCY);
+static void copy_gpu_offset(int N, float * X, int OFFX, int INCX, float * Y, int OFFY, int INCY);
+static void forward_reorg_layer_gpu(float *l_output_gpu, float *input_gpu, int l_w, int l_h, int l_c, int l_batch, int l_stride);
+static void reorg_gpu(float *x, int w, int h, int c, int batch, int stride, int forward, float *out);
+static void forward_detection_layer_gpu(float *l_output_gpu, float *input_gpu, int l_batch, int l_inputs);
+static void forward_region_layer_gpu(float *l_output_gpu, float *input_gpu, float *l_output, int l_batch, int l_inputs, int l_n, int l_w, int l_h, int l_coords, int l_background, int l_classes, int l_outputs);
+static int entry_index(int l_w, int l_h, int l_outputs, int l_coords, int l_classes, int batch, int location, int entry);
+static void softmax_gpu(float *input, int n, int batch, int batch_offset, int groups, int group_offset, int stride, float temp, float *output);
+static void cuda_pull_array(float *x_gpu, float *x, size_t n);
 
 int main(void)
 {
@@ -70,33 +81,33 @@ int main(void)
     FILE *fp_scales;
     FILE *fp_biases;
     FILE *fp_netinfo;
-    static int sa_typ_s32[31];
-    static int sa_wid_s32[31];
-    static int sa_hei_s32[31];
-    static int sa_chn_s32[31];
-    static int sa_ker_s32[31];
-    static int sa_pad_s32[31];
-    static int sa_ibn_s32[31];
-    static int sa_nwe_s32[31];
+    static int sa_typ_s32[32];
+    static int sa_wid_s32[32];
+    static int sa_hei_s32[32];
+    static int sa_chn_s32[32];
+    static int sa_ker_s32[32];
+    static int sa_pad_s32[32];
+    static int sa_ibn_s32[32];
+    static int sa_nwe_s32[32];
     static unsigned char sa_image_in_u08[WID_SRC * HEI_SRC * CHN_SRC];
     static float sa_image_sized_f32[WID_SIZED * HEI_SIZED * CHN_SRC];
     static float sa_tmp_buf_f32[SIZE_MAX_WORKSPACE];
-    static float *spa_out_f32[31];
-    static float *spa_weights_f32[31];
-    static float *spa_mean_f32[31];
-    static float *spa_variance_f32[31];
-    static float *spa_scales_f32[31];
-    static float *spa_biases_f32[31];
-    static float *sp_gpu_out_f32[31];
-    static float *sp_gpu_weights_f32[31];
-    static float *sp_gpu_mean_f32[31];
-    static float *sp_gpu_variance_f32[31];
-    static float *sp_gpu_scales_f32[31];
-    static float *sp_gpu_biases_f32[31];
+    static float *spa_out_f32[32];
+    static float *spa_weights_f32[32];
+    static float *spa_mean_f32[32];
+    static float *spa_variance_f32[32];
+    static float *spa_scales_f32[32];
+    static float *spa_biases_f32[32];
+    static float *sp_gpu_out_f32[32];
+    static float *sp_gpu_weights_f32[32];
+    static float *sp_gpu_mean_f32[32];
+    static float *sp_gpu_variance_f32[32];
+    static float *sp_gpu_scales_f32[32];
+    static float *sp_gpu_biases_f32[32];
     static float *sp_gpu_input_f32;
     static float *sp_gpu_workspace_f32;
     static float sa_ref_sized_f32[WID_SIZED * HEI_SIZED * CHN_SRC];
-    static float *spa_ref_f32[31];
+    static float *spa_ref_f32[32];
     int i, j, k, l;
     image im, sized;
     size_t fread_return;
@@ -161,7 +172,7 @@ int main(void)
         printf("yolo_gpu_results fopen error\n");
         return -1;
     }
-    for(i = 0; i < 31; i++)
+    for(i = 0; i < 32; i++)
     {
         fread_return = fread(&sa_typ_s32[i], 1, sizeof(int), fp_netinfo);        
         fread_return = fread(&sa_wid_s32[i], 1, sizeof(int), fp_netinfo);        
@@ -839,11 +850,172 @@ int main(void)
     }
 #endif
 
+    clk_srt = clock();
+    l = 25;
+    forward_route_layer_25_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[16]);
+    clk_end = clock();
+    printf("layer %d type %d: %f secs\n", l, sa_typ_s32[l], (double)(clk_end - clk_srt) / CLOCKS_PER_SEC);
+
+#if (1 == CHK_INTER_LAYER)
+    cudaMemcpy(spa_out_f32[l], sp_gpu_out_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l] * sizeof(float), cudaMemcpyDeviceToHost);
+    for(k = 0; k < sa_chn_s32[l]; k++)
+    {
+        for(j = 0; j < sa_hei_s32[l]; j++)
+        {
+            for(i = 0; i < sa_wid_s32[l]; i++)
+            {
+                if(fabsf(spa_out_f32[l][i + j * sa_wid_s32[l] + k * sa_wid_s32[l] * sa_hei_s32[l]] - spa_ref_f32[l][i + j * sa_wid_s32[l] + k * sa_wid_s32[l] * sa_hei_s32[l]]) > 0.00001f)
+                {
+                    printf("layer %d mismatch: w %d, h %d, c %d, out %f, GT %f\n", l, i, j, k, spa_out_f32[l][i + j * sa_wid_s32[l] + k * sa_wid_s32[l] * sa_hei_s32[l]], spa_ref_f32[l][i + j * sa_wid_s32[l] + k * sa_wid_s32[l] * sa_hei_s32[l]]);
+                }
+            }
+        }
+    }
+#endif
+
+    clk_srt = clock();
+    l = 26;
+    forward_convolutional_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
+    clk_end = clock();
+    printf("layer %d type %d: %f secs\n", l, sa_typ_s32[l], (double)(clk_end - clk_srt) / CLOCKS_PER_SEC);
+
+#if (1 == CHK_INTER_LAYER)
+    cudaMemcpy(spa_out_f32[l], sp_gpu_out_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l] * sizeof(float), cudaMemcpyDeviceToHost);
+    for(k = 0; k < sa_chn_s32[l]; k++)
+    {
+        for(j = 0; j < sa_hei_s32[l]; j++)
+        {
+            for(i = 0; i < sa_wid_s32[l]; i++)
+            {
+                if(fabsf(spa_out_f32[l][i + j * sa_wid_s32[l] + k * sa_wid_s32[l] * sa_hei_s32[l]] - spa_ref_f32[l][i + j * sa_wid_s32[l] + k * sa_wid_s32[l] * sa_hei_s32[l]]) > 0.00001f)
+                {
+                    printf("layer %d mismatch: w %d, h %d, c %d, out %f, GT %f\n", l, i, j, k, spa_out_f32[l][i + j * sa_wid_s32[l] + k * sa_wid_s32[l] * sa_hei_s32[l]], spa_ref_f32[l][i + j * sa_wid_s32[l] + k * sa_wid_s32[l] * sa_hei_s32[l]]);
+                }
+            }
+        }
+    }
+#endif
+
+    clk_srt = clock();
+    l = 27;
+    forward_reorg_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], sa_wid_s32[l - 1], sa_hei_s32[l - 1], sa_chn_s32[l - 1], 1, 2);
+    clk_end = clock();
+    printf("layer %d type %d: %f secs\n", l, sa_typ_s32[l], (double)(clk_end - clk_srt) / CLOCKS_PER_SEC);
+
+#if (1 == CHK_INTER_LAYER)
+    cudaMemcpy(spa_out_f32[l], sp_gpu_out_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l] * sizeof(float), cudaMemcpyDeviceToHost);
+    for(k = 0; k < sa_chn_s32[l]; k++)
+    {
+        for(j = 0; j < sa_hei_s32[l]; j++)
+        {
+            for(i = 0; i < sa_wid_s32[l]; i++)
+            {
+                if(fabsf(spa_out_f32[l][i + j * sa_wid_s32[l] + k * sa_wid_s32[l] * sa_hei_s32[l]] - spa_ref_f32[l][i + j * sa_wid_s32[l] + k * sa_wid_s32[l] * sa_hei_s32[l]]) > 0.00001f)
+                {
+                    printf("layer %d mismatch: w %d, h %d, c %d, out %f, GT %f\n", l, i, j, k, spa_out_f32[l][i + j * sa_wid_s32[l] + k * sa_wid_s32[l] * sa_hei_s32[l]], spa_ref_f32[l][i + j * sa_wid_s32[l] + k * sa_wid_s32[l] * sa_hei_s32[l]]);
+                }
+            }
+        }
+    }
+#endif
+
+    clk_srt = clock();
+    l = 28;
+    forward_route_layer_28_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[27], sp_gpu_out_f32[24]);
+    clk_end = clock();
+    printf("layer %d type %d: %f secs\n", l, sa_typ_s32[l], (double)(clk_end - clk_srt) / CLOCKS_PER_SEC);
+
+#if (1 == CHK_INTER_LAYER)
+    cudaMemcpy(spa_out_f32[l], sp_gpu_out_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l] * sizeof(float), cudaMemcpyDeviceToHost);
+    for(k = 0; k < sa_chn_s32[l]; k++)
+    {
+        for(j = 0; j < sa_hei_s32[l]; j++)
+        {
+            for(i = 0; i < sa_wid_s32[l]; i++)
+            {
+                if(fabsf(spa_out_f32[l][i + j * sa_wid_s32[l] + k * sa_wid_s32[l] * sa_hei_s32[l]] - spa_ref_f32[l][i + j * sa_wid_s32[l] + k * sa_wid_s32[l] * sa_hei_s32[l]]) > 0.00001f)
+                {
+                    printf("layer %d mismatch: w %d, h %d, c %d, out %f, GT %f\n", l, i, j, k, spa_out_f32[l][i + j * sa_wid_s32[l] + k * sa_wid_s32[l] * sa_hei_s32[l]], spa_ref_f32[l][i + j * sa_wid_s32[l] + k * sa_wid_s32[l] * sa_hei_s32[l]]);
+                }
+            }
+        }
+    }
+#endif
+
+    clk_srt = clock();
+    l = 29;
+    forward_convolutional_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
+    clk_end = clock();
+    printf("layer %d type %d: %f secs\n", l, sa_typ_s32[l], (double)(clk_end - clk_srt) / CLOCKS_PER_SEC);
+
+#if (1 == CHK_INTER_LAYER)
+    cudaMemcpy(spa_out_f32[l], sp_gpu_out_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l] * sizeof(float), cudaMemcpyDeviceToHost);
+    for(k = 0; k < sa_chn_s32[l]; k++)
+    {
+        for(j = 0; j < sa_hei_s32[l]; j++)
+        {
+            for(i = 0; i < sa_wid_s32[l]; i++)
+            {
+                if(fabsf(spa_out_f32[l][i + j * sa_wid_s32[l] + k * sa_wid_s32[l] * sa_hei_s32[l]] - spa_ref_f32[l][i + j * sa_wid_s32[l] + k * sa_wid_s32[l] * sa_hei_s32[l]]) > 0.00001f)
+                {
+                    printf("layer %d mismatch: w %d, h %d, c %d, out %f, GT %f\n", l, i, j, k, spa_out_f32[l][i + j * sa_wid_s32[l] + k * sa_wid_s32[l] * sa_hei_s32[l]], spa_ref_f32[l][i + j * sa_wid_s32[l] + k * sa_wid_s32[l] * sa_hei_s32[l]]);
+                }
+            }
+        }
+    }
+#endif
+
+    clk_srt = clock();
+    l = 30;
+    forward_convolutional_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LINEAR);
+    clk_end = clock();
+    printf("layer %d type %d: %f secs\n", l, sa_typ_s32[l], (double)(clk_end - clk_srt) / CLOCKS_PER_SEC);
+
+#if (1 == CHK_INTER_LAYER)
+    cudaMemcpy(spa_out_f32[l], sp_gpu_out_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l] * sizeof(float), cudaMemcpyDeviceToHost);
+    for(k = 0; k < sa_chn_s32[l]; k++)
+    {
+        for(j = 0; j < sa_hei_s32[l]; j++)
+        {
+            for(i = 0; i < sa_wid_s32[l]; i++)
+            {
+                if(fabsf(spa_out_f32[l][i + j * sa_wid_s32[l] + k * sa_wid_s32[l] * sa_hei_s32[l]] - spa_ref_f32[l][i + j * sa_wid_s32[l] + k * sa_wid_s32[l] * sa_hei_s32[l]]) > 0.00001f)
+                {
+                    printf("layer %d mismatch: w %d, h %d, c %d, out %f, GT %f\n", l, i, j, k, spa_out_f32[l][i + j * sa_wid_s32[l] + k * sa_wid_s32[l] * sa_hei_s32[l]], spa_ref_f32[l][i + j * sa_wid_s32[l] + k * sa_wid_s32[l] * sa_hei_s32[l]]);
+                }
+            }
+        }
+    }
+#endif
+
+    clk_srt = clock();
+    l = 31;
+    forward_region_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], spa_out_f32[l], 1, sa_wid_s32[l - 1] * sa_hei_s32[l - 1] * sa_chn_s32[l - 1], 5, sa_wid_s32[l - 1], sa_hei_s32[l - 1], 4, 0, 80, sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l]);
+    clk_end = clock();
+    printf("layer %d type %d: %f secs\n", l, sa_typ_s32[l], (double)(clk_end - clk_srt) / CLOCKS_PER_SEC);
+
+#if (1 == CHK_INTER_LAYER)
+    cudaMemcpy(spa_out_f32[l], sp_gpu_out_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l] * sizeof(float), cudaMemcpyDeviceToHost);
+    for(k = 0; k < sa_chn_s32[l]; k++)
+    {
+        for(j = 0; j < sa_hei_s32[l]; j++)
+        {
+            for(i = 0; i < sa_wid_s32[l]; i++)
+            {
+                if(fabsf(spa_out_f32[l][i + j * sa_wid_s32[l] + k * sa_wid_s32[l] * sa_hei_s32[l]] - spa_ref_f32[l][i + j * sa_wid_s32[l] + k * sa_wid_s32[l] * sa_hei_s32[l]]) > 0.00001f)
+                {
+                    printf("layer %d mismatch: w %d, h %d, c %d, out %f, GT %f\n", l, i, j, k, spa_out_f32[l][i + j * sa_wid_s32[l] + k * sa_wid_s32[l] * sa_hei_s32[l]], spa_ref_f32[l][i + j * sa_wid_s32[l] + k * sa_wid_s32[l] * sa_hei_s32[l]]);
+                }
+            }
+        }
+    }
+#endif
+
 #if (1 == DEBUG_WRITING)
     fclose(fp_fprintf_debug);
 #endif
 
-    for(i = 0; i < 31; i++)
+    for(i = 0; i < 32; i++)
     {
         free(spa_out_f32[i]);
         cudaFree(sp_gpu_out_f32[i]);
@@ -1361,5 +1533,160 @@ static void forward_maxpool_layer_gpu(float *l_output_gpu, float *input_gpu, int
 
     forward_maxpool_layer_kernel<<<cuda_gridsize(n), BLOCK>>>(n, layer_h, layer_w, layer_c, layer_stride, layer_size, layer_pad, input_gpu, l_output_gpu);
     check_error(cudaPeekAtLastError());
+}
+
+static void forward_route_layer_25_gpu(float *l_output_gpu, float *input_l16)
+{
+    int offset = 0;
+    float *input = input_l16;
+    int input_size = 739328;
+    copy_gpu(input_size, input, 1, l_output_gpu + offset, 1);
+}
+
+static void forward_route_layer_28_gpu(float *l_output_gpu, float *input_l27, float *input_l24)
+{
+    int offset = 0;
+    float *input = input_l27;
+    int input_size = 92416;
+    copy_gpu(input_size, input, 1, l_output_gpu + offset, 1);
+    offset += input_size;
+    input = input_l24;
+    input_size = 369664;
+    copy_gpu(input_size, input, 1, l_output_gpu + offset, 1);
+}
+
+static void copy_gpu(int N, float * X, int INCX, float * Y, int INCY)
+{
+    copy_gpu_offset(N, X, 0, INCX, Y, 0, INCY);
+}
+
+__global__ void copy_kernel(int N,  float *X, int OFFX, int INCX, float *Y, int OFFY, int INCY)
+{
+    int i = (blockIdx.x + blockIdx.y*gridDim.x) * blockDim.x + threadIdx.x;
+    if(i < N) Y[i*INCY + OFFY] = X[i*INCX + OFFX];
+}
+
+static void copy_gpu_offset(int N, float * X, int OFFX, int INCX, float * Y, int OFFY, int INCY)
+{
+    copy_kernel<<<cuda_gridsize(N), BLOCK>>>(N, X, OFFX, INCX, Y, OFFY, INCY);
+    check_error(cudaPeekAtLastError());
+}
+
+static void forward_reorg_layer_gpu(float *l_output_gpu, float *input_gpu, int l_w, int l_h, int l_c, int l_batch, int l_stride)
+{
+    reorg_gpu(input_gpu, l_w, l_h, l_c, l_batch, l_stride, 0, l_output_gpu);
+}
+
+__global__ void reorg_kernel(int N, float *x, int w, int h, int c, int batch, int stride, int forward, float *out)
+{
+    int i = (blockIdx.x + blockIdx.y*gridDim.x) * blockDim.x + threadIdx.x;
+    if(i >= N) return;
+    int in_index = i;
+    int in_w = i%w;
+    i = i/w;
+    int in_h = i%h;
+    i = i/h;
+    int in_c = i%c;
+    i = i/c;
+    int b = i%batch;
+
+    int out_c = c/(stride*stride);
+
+    int c2 = in_c % out_c;
+    int offset = in_c / out_c;
+    int w2 = in_w*stride + offset % stride;
+    int h2 = in_h*stride + offset / stride;
+    int out_index = w2 + w*stride*(h2 + h*stride*(c2 + out_c*b));
+
+    if(forward) out[out_index] = x[in_index];
+    else out[in_index] = x[out_index];
+}
+
+static void reorg_gpu(float *x, int w, int h, int c, int batch, int stride, int forward, float *out)
+{
+    int size = w*h*c*batch;
+    reorg_kernel<<<cuda_gridsize(size), BLOCK>>>(size, x, w, h, c, batch, stride, forward, out);
+    check_error(cudaPeekAtLastError());
+}
+
+static void forward_detection_layer_gpu(float *l_output_gpu, float *input_gpu, int l_batch, int l_inputs)
+{
+    copy_gpu(l_batch*l_inputs, input_gpu, 1, l_output_gpu, 1);
+
+#if 0
+    forward_detection_layer(l, net);
+    cuda_push_array(l.output_gpu, l.output, l.batch*l.outputs);
+    cuda_push_array(l.delta_gpu, l.delta, l.batch*l.inputs);
+#endif
+}
+
+static void forward_region_layer_gpu(float *l_output_gpu, float *input_gpu, float *l_output, int l_batch, int l_inputs, int l_n, int l_w, int l_h, int l_coords, int l_background, int l_classes, int l_outputs)
+{
+    copy_gpu(l_batch*l_inputs, input_gpu, 1, l_output_gpu, 1);
+    int b, n;
+    for (b = 0; b < l_batch; ++b){
+        for(n = 0; n < l_n; ++n){
+            int index = entry_index(l_w, l_h, l_outputs, l_coords, l_classes, b, n*l_w*l_h, 0);
+            activate_array_gpu(l_output_gpu + index, 2*l_w*l_h, LOGISTIC);
+            index = entry_index(l_w, l_h, l_outputs, l_coords, l_classes, b, n*l_w*l_h, l_coords);
+            activate_array_gpu(l_output_gpu + index,   l_w*l_h, LOGISTIC);
+            index = entry_index(l_w, l_h, l_outputs, l_coords, l_classes, b, n*l_w*l_h, l_coords + 1);
+        }
+    }
+    {
+        int index = entry_index(l_w, l_h, l_outputs, l_coords, l_classes, 0, 0, l_coords + !l_background);
+        softmax_gpu(input_gpu + index, l_classes + l_background, l_batch*l_n, l_inputs/l_n, l_w*l_h, 1, l_w*l_h, 1, l_output_gpu + index);
+    }
+    {
+        cuda_pull_array(l_output_gpu, l_output, l_batch*l_outputs);
+    }
+}
+
+static int entry_index(int l_w, int l_h, int l_outputs, int l_coords, int l_classes, int batch, int location, int entry)
+{
+    int n =   location / (l_w*l_h);
+    int loc = location % (l_w*l_h);
+    return batch*l_outputs + n*l_w*l_h*(l_coords+l_classes+1) + entry*l_w*l_h + loc;
+}
+
+__device__ void softmax_device(float *input, int n, float temp, int stride, float *output)
+{
+    int i;
+    float sum = 0;
+    float largest = -INFINITY;
+    for(i = 0; i < n; ++i){
+        int val = input[i*stride];
+        largest = (val>largest) ? val : largest;
+    }
+    for(i = 0; i < n; ++i){
+        float e = expf(input[i*stride]/temp - largest/temp);
+        sum += e;
+        output[i*stride] = e;
+    }
+    for(i = 0; i < n; ++i){
+        output[i*stride] /= sum;
+    }
+}
+
+__global__ void softmax_kernel(float *input, int n, int batch, int batch_offset, int groups, int group_offset, int stride, float temp, float *output)
+{
+    int id = (blockIdx.x + blockIdx.y*gridDim.x) * blockDim.x + threadIdx.x;
+    if (id >= batch*groups) return;
+    int b = id / groups;
+    int g = id % groups;
+    softmax_device(input + b*batch_offset + g*group_offset, n, temp, stride, output + b*batch_offset + g*group_offset);
+}
+
+static void softmax_gpu(float *input, int n, int batch, int batch_offset, int groups, int group_offset, int stride, float temp, float *output)
+{
+    softmax_kernel<<<cuda_gridsize(batch*groups), BLOCK>>>(input, n, batch, batch_offset, groups, group_offset, stride, temp, output);
+    check_error(cudaPeekAtLastError());
+}
+
+static void cuda_pull_array(float *x_gpu, float *x, size_t n)
+{
+    size_t size = sizeof(float)*n;
+    cudaError_t status = cudaMemcpy(x, x_gpu, size, cudaMemcpyDeviceToHost);
+    check_error(status);
 }
 
