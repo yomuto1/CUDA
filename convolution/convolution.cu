@@ -23,7 +23,7 @@
 #define BLOCK (512)
 
 #define CHK_INTER_LAYER (0)
-#define ACCEPTABLE_DIFF (0.0001f)
+#define ACCEPTABLE_DIFF (0.005f)
 
 #if (1 == DEBUG_WRITING)
 FILE *fp_fprintf_debug;
@@ -49,7 +49,9 @@ static int sa_pad_s32[NUM_LAYER];
 static int sa_ibn_s32[NUM_LAYER];
 static int sa_nwe_s32[NUM_LAYER];
 static unsigned char sa_image_in_u08[WID_SRC * HEI_SRC * CHN_SRC];
+#if (1 == CHK_INTER_LAYER)
 static float sa_image_sized_f32[WID_SIZED * HEI_SIZED * CHN_SRC];
+#endif
 static float sa_tmp_buf_f32[SIZE_MAX_WORKSPACE];
 static float sa_out_f32[WID_DST * HEI_DST * CHN_DST];
 static float *spa_out_f32[NUM_LAYER];
@@ -70,16 +72,6 @@ static float sa_ref_sized_f32[WID_SIZED * HEI_SIZED * CHN_SRC];
 static float *spa_ref_f32[NUM_LAYER];
 
 static void yolo_main(float *p_out_f32, unsigned char *p_image_in_u08);
-static image make_empty_image(int w, int h, int c);
-static image make_image(int w, int h, int c);
-static float get_pixel(image m, int x, int y, int c);
-static void set_pixel(image m, int x, int y, int c, float val);
-static void add_pixel(image m, int x, int y, int c, float val);
-static image resize_image(image im, int w, int h);
-static void fill_image(image m, float s);
-static void embed_image(image source, image dest, int dx, int dy);
-static void free_image(image m);
-static image letterbox_image(image im, int w, int h);
 static float *cuda_make_array(float *x, size_t n);
 static void check_error(cudaError_t status);
 static void fill_gpu(int N, float ALPHA, float * X, int INCX);
@@ -107,6 +99,11 @@ static void cuda_pull_array(float *x_gpu, float *x, size_t n);
 #if (1 == CHK_INTER_LAYER)
 static void check_intermediate_layer_results(int l);
 #endif
+
+static unsigned char *sp_gpu_image_in_u08;
+static float *sp_gpu_image_in_f32;
+static float *sp_gpu_resized_f32;
+static float *sp_gpu_part_f32;
 
 int main(void)
 {
@@ -235,8 +232,12 @@ int main(void)
     fread_return = fread(sa_image_in_u08, WID_SRC * HEI_SRC * CHN_SRC, sizeof(unsigned char), fp);
     fclose(fp);
 
-    sp_gpu_input_f32 = cuda_make_array(sa_image_sized_f32, WID_SIZED * HEI_SIZED * CHN_SRC);
     sp_gpu_workspace_f32 = cuda_make_array(sa_tmp_buf_f32, SIZE_MAX_WORKSPACE);
+    sp_gpu_input_f32 = cuda_make_array(sa_tmp_buf_f32, WID_SIZED * HEI_SIZED * CHN_SRC);
+    cudaMalloc((void **)&sp_gpu_image_in_u08, WID_SRC * HEI_SRC * CHN_SRC * sizeof(unsigned char));
+    cudaMalloc((void **)&sp_gpu_image_in_f32, WID_SRC * HEI_SRC * CHN_SRC * sizeof(float));
+    cudaMalloc((void **)&sp_gpu_resized_f32, 608 * 456 * 3 * sizeof(float));
+    cudaMalloc((void **)&sp_gpu_part_f32, 608 * 576 * 3 * sizeof(float));
 
     clk_srt = clock();
     yolo_main(sa_out_f32, sa_image_in_u08);
@@ -317,46 +318,154 @@ int main(void)
 
     cudaFree(sp_gpu_input_f32);
     cudaFree(sp_gpu_workspace_f32);
+    cudaFree(sp_gpu_image_in_u08);
+    cudaFree(sp_gpu_image_in_f32);
+    cudaFree(sp_gpu_resized_f32);
+    cudaFree(sp_gpu_part_f32);
 
     return 0;
 }
 
+__global__ void u08_to_f32_3ch_kernel(float *p_out_f32, unsigned char *p_src_u08, int wid_s32, int hei_s32)
+{
+    int threadIdx_x_s32 = threadIdx.x;
+    int threadIdx_y_s32 = threadIdx.y;
+    int iCount_s32 = blockIdx.x * blockDim.x + threadIdx_x_s32;
+    int jCount_s32 = blockIdx.y * blockDim.y + threadIdx_y_s32;
+
+    if( (iCount_s32 < wid_s32) && (jCount_s32 < hei_s32) )
+    {
+        p_out_f32[iCount_s32 + jCount_s32 * wid_s32] = p_src_u08[iCount_s32 + jCount_s32 * wid_s32] / 255.f;
+        p_out_f32[iCount_s32 + jCount_s32 * wid_s32 + wid_s32 * hei_s32] = p_src_u08[iCount_s32 + jCount_s32 * wid_s32 + wid_s32 * hei_s32] / 255.f;
+        p_out_f32[iCount_s32 + jCount_s32 * wid_s32 + wid_s32 * hei_s32 * 2] = p_src_u08[iCount_s32 + jCount_s32 * wid_s32 + wid_s32 * hei_s32 * 2] / 255.f;
+    }
+}
+
+#define W_SCALE (1.263591f)
+#define H_SCALE (1.263736f)
+
+__global__ void resize_image_1_kernel(float *part, float *im)
+{
+    int threadIdx_x_s32 = threadIdx.x;
+    int threadIdx_y_s32 = threadIdx.y;
+    int iCount_s32 = blockIdx.x * blockDim.x + threadIdx_x_s32;
+    int jCount_s32 = blockIdx.y * blockDim.y + threadIdx_y_s32;
+
+    if( (iCount_s32 < WID_SIZED) && (jCount_s32 < 576) )
+    {
+        float sx = iCount_s32 * W_SCALE;
+        int ix = (int) sx;
+        float dx = sx - ix;
+        float val;
+        val = (1 - dx) * im[0 * HEI_SRC * WID_SRC + jCount_s32 * WID_SRC + ix] + dx * im[0 * HEI_SRC * WID_SRC + jCount_s32 * WID_SRC + ix + 1];
+        part[0 * WID_SIZED * HEI_SRC + jCount_s32 * WID_SIZED + iCount_s32] = val;
+        val = (1 - dx) * im[1 * HEI_SRC * WID_SRC + jCount_s32 * WID_SRC + ix] + dx * im[1 * HEI_SRC * WID_SRC + jCount_s32 * WID_SRC + ix + 1];
+        part[1 * WID_SIZED * HEI_SRC + jCount_s32 * WID_SIZED + iCount_s32] = val;
+        val = (1 - dx) * im[2 * HEI_SRC * WID_SRC + jCount_s32 * WID_SRC + ix] + dx * im[2 * HEI_SRC * WID_SRC + jCount_s32 * WID_SRC + ix + 1];
+        part[2 * WID_SIZED * HEI_SRC + jCount_s32 * WID_SIZED + iCount_s32] = val;
+    }
+}
+
+__global__ void resize_image_2_kernel(float *resized, float *part)
+{
+    int threadIdx_x_s32 = threadIdx.x;
+    int threadIdx_y_s32 = threadIdx.y;
+    int iCount_s32 = blockIdx.x * blockDim.x + threadIdx_x_s32;
+    int jCount_s32 = blockIdx.y * blockDim.y + threadIdx_y_s32;
+
+    if( (iCount_s32 < WID_SIZED) && (jCount_s32 < 456) )
+    {
+        float sy = jCount_s32 * H_SCALE;
+        int iy = (int) sy;
+        float dy = sy - iy;
+        float val;
+        val = (1-dy) * part[0 * 608 * 576 + iy * 608 + iCount_s32];
+        resized[0 * 608 * 456 + jCount_s32 * 608 + iCount_s32] = val;
+        val = dy * part[0 * 608 * 576 + (iy + 1) * 608 + iCount_s32];
+        resized[0 * 608 * 456 + jCount_s32 * 608 + iCount_s32] += val;
+        val = (1-dy) * part[1 * 608 * 576 + iy * 608 + iCount_s32];
+        resized[1 * 608 * 456 + jCount_s32 * 608 + iCount_s32] = val;
+        val = dy * part[1 * 608 * 576 + (iy + 1) * 608 + iCount_s32];
+        resized[1 * 608 * 456 + jCount_s32 * 608 + iCount_s32] += val;
+        val = (1-dy) * part[2 * 608 * 576 + iy * 608 + iCount_s32];
+        resized[2 * 608 * 456 + jCount_s32 * 608 + iCount_s32] = val;
+        val = dy * part[2 * 608 * 576 + (iy + 1) * 608 + iCount_s32];
+        resized[2 * 608 * 456 + jCount_s32 * 608 + iCount_s32] += val;
+    }
+}
+
+__global__ void fill_image_kernel(float *boxed)
+{
+    int threadIdx_x_s32 = threadIdx.x;
+    int threadIdx_y_s32 = threadIdx.y;
+    int iCount_s32 = blockIdx.x * blockDim.x + threadIdx_x_s32;
+    int jCount_s32 = blockIdx.y * blockDim.y + threadIdx_y_s32;
+
+    if( (iCount_s32 < WID_SIZED) && (jCount_s32 < HEI_SIZED) )
+    {
+        boxed[iCount_s32 + jCount_s32 * WID_SIZED] = 0.5f;
+        boxed[iCount_s32 + jCount_s32 * WID_SIZED + WID_SIZED * HEI_SIZED] = 0.5f;
+        boxed[iCount_s32 + jCount_s32 * WID_SIZED + WID_SIZED * HEI_SIZED * 2] = 0.5f;
+    }
+}
+
+__global__ void embed_image_kernel(float *resized, float *boxed, int dx, int dy)
+{
+    int threadIdx_x_s32 = threadIdx.x;
+    int threadIdx_y_s32 = threadIdx.y;
+    int iCount_s32 = blockIdx.x * blockDim.x + threadIdx_x_s32;
+    int jCount_s32 = blockIdx.y * blockDim.y + threadIdx_y_s32;
+
+    if( (iCount_s32 < WID_SIZED) && (jCount_s32 < 456) )
+    {
+        float val;
+        val = resized[0 * 608 * 456 + jCount_s32 * 608 + iCount_s32];
+        boxed[0 * 608 * 608 + (dy + jCount_s32) * 608 + (dx + iCount_s32)] = val;
+        val = resized[1 * 608 * 456 + jCount_s32 * 608 + iCount_s32];
+        boxed[1 * 608 * 608 + (dy + jCount_s32) * 608 + (dx + iCount_s32)] = val;
+        val = resized[2 * 608 * 456 + jCount_s32 * 608 + iCount_s32];
+        boxed[2 * 608 * 608 + (dy + jCount_s32) * 608 + (dx + iCount_s32)] = val;
+    }
+}
+
 static void yolo_main(float *p_out_f32, unsigned char *p_image_in_u08)
 {
-    static float sa_image_in_f32[WID_SRC * HEI_SRC * CHN_SRC];
-    int i, j, k, l;
-    image im;
-    image sized;
+#if (1 == CHK_INTER_LAYER)
+    int i, j, k;
+#endif
+    int l;
+    dim3 grid_img_resize_0( 16, 16 );
+    dim3 grid_numblocks_resize_0( WID_SRC / grid_img_resize_0.x, HEI_SRC / grid_img_resize_0.y );
+    dim3 grid_img_resize_1( 16, 16 );
+    dim3 grid_numblocks_resize_1( WID_SIZED / grid_img_resize_1.x, HEI_SRC / grid_img_resize_1.y );
+    dim3 grid_img_resize_2( 16, 8 );
+    dim3 grid_numblocks_resize_2( WID_SIZED / grid_img_resize_2.x, 456 / grid_img_resize_2.y );
+    dim3 grid_img_resize_3( 16, 16 );
+    dim3 grid_numblocks_resize_3( WID_SIZED / grid_img_resize_3.x, HEI_SIZED / grid_img_resize_3.y );
+    dim3 grid_img_resize_4( 16, 8 );
+    dim3 grid_numblocks_resize_4( WID_SIZED / grid_img_resize_4.x, 456 / grid_img_resize_4.y );
 
-    im.w = WID_SRC;
-    im.h = HEI_SRC;
-    im.c = CHN_SRC;
-    im.data = sa_image_in_f32;
+    cudaMemcpy(sp_gpu_image_in_u08, p_image_in_u08, WID_SRC * HEI_SRC * CHN_SRC * sizeof(unsigned char), cudaMemcpyHostToDevice);
 
-    for(k = 0; k < CHN_SRC; k++)
-    {
-        for(j=0;j<HEI_SRC;j++)
-        {
-            for(i=0;i<WID_SRC;i++)
-            {
-                sa_image_in_f32[i + j * WID_SRC + k * WID_SRC * HEI_SRC] = p_image_in_u08[i + j * WID_SRC + k * WID_SRC * HEI_SRC] / 255.f;
-            }
-        }
-    }
-    sized = letterbox_image(im, WID_SIZED, HEI_SIZED);
-    cudaMemcpy(sp_gpu_input_f32, sized.data, WID_SIZED * HEI_SIZED * CHN_SRC * sizeof(float), cudaMemcpyHostToDevice);
-    free(sized.data);    
+    u08_to_f32_3ch_kernel<<<grid_numblocks_resize_0, grid_img_resize_0>>>(sp_gpu_image_in_f32, sp_gpu_image_in_u08, WID_SRC, HEI_SRC);
+    resize_image_1_kernel<<<grid_numblocks_resize_1, grid_img_resize_1>>>(sp_gpu_part_f32, sp_gpu_image_in_f32);
+    resize_image_2_kernel<<<grid_numblocks_resize_2, grid_img_resize_2>>>(sp_gpu_resized_f32, sp_gpu_part_f32);
+    fill_image_kernel<<<grid_numblocks_resize_3, grid_img_resize_3>>>(sp_gpu_input_f32);
+    embed_image_kernel<<<grid_numblocks_resize_4, grid_img_resize_4>>>(sp_gpu_resized_f32, sp_gpu_input_f32, 0, 76);
+    check_error(cudaPeekAtLastError());
 
 #if (1 == CHK_INTER_LAYER)
+    cudaMemcpy(sa_image_sized_f32, sp_gpu_input_f32, WID_SIZED * HEI_SIZED * CHN_SRC * sizeof(float), cudaMemcpyDeviceToHost);
+
     for(k = 0; k < CHN_SRC; k++)
     {
         for(j = 0; j < HEI_SIZED; j++)
         {
             for(i = 0; i < WID_SIZED; i++)
             {
-                if(fabsf(sized.data[i + j * WID_SIZED + k * WID_SIZED * HEI_SIZED] - sa_ref_sized_f32[i + j * WID_SIZED + k * WID_SIZED * HEI_SIZED]) > ACCEPTABLE_DIFF)
+                if(fabsf(sa_image_sized_f32[i + j * WID_SIZED + k * WID_SIZED * HEI_SIZED] - sa_ref_sized_f32[i + j * WID_SIZED + k * WID_SIZED * HEI_SIZED]) > ACCEPTABLE_DIFF)
                 {
-                    printf("resize mismatch: w %d, h %d, c %d, out %f, GT %f\n", i, j, k, sized.data[i + j * WID_SIZED + k * WID_SIZED * HEI_SIZED], sa_ref_sized_f32[i + j * WID_SIZED + k * WID_SIZED * HEI_SIZED]);
+                    printf("resize mismatch: w %d, h %d, c %d, out %f, GT %f\n", i, j, k, sa_image_sized_f32[i + j * WID_SIZED + k * WID_SIZED * HEI_SIZED], sa_ref_sized_f32[i + j * WID_SIZED + k * WID_SIZED * HEI_SIZED]);
                 }
             }
         }
@@ -461,128 +570,6 @@ static void yolo_main(float *p_out_f32, unsigned char *p_image_in_u08)
     forward_region_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], spa_out_f32[l], 1, sa_wid_s32[l - 1] * sa_hei_s32[l - 1] * sa_chn_s32[l - 1], 5, sa_wid_s32[l - 1], sa_hei_s32[l - 1], 4, 0, 80, sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l]);
 
     cudaMemcpy(p_out_f32, sp_gpu_out_f32[l], WID_DST * HEI_DST * CHN_DST * sizeof(float), cudaMemcpyDeviceToHost);
-}
-
-static image make_empty_image(int w, int h, int c)
-{
-    image out;
-    out.data = 0;
-    out.h = h;
-    out.w = w;
-    out.c = c;
-    return out;
-}
-
-static image make_image(int w, int h, int c)
-{
-    image out = make_empty_image(w,h,c);
-    out.data = (float *)calloc(h*w*c, sizeof(float));
-    return out;
-}
-
-static float get_pixel(image m, int x, int y, int c)
-{
-    return m.data[c*m.h*m.w + y*m.w + x];
-}
-
-static void set_pixel(image m, int x, int y, int c, float val)
-{
-    if (x < 0 || y < 0 || c < 0 || x >= m.w || y >= m.h || c >= m.c) return;
-    m.data[c*m.h*m.w + y*m.w + x] = val;
-}
-
-static void add_pixel(image m, int x, int y, int c, float val)
-{
-    m.data[c*m.h*m.w + y*m.w + x] += val;
-}
-
-static image resize_image(image im, int w, int h)
-{
-    image resized = make_image(w, h, im.c);   
-    image part = make_image(w, im.h, im.c);
-    int r, c, k;
-    float w_scale = (float)(im.w - 1) / (w - 1);
-    float h_scale = (float)(im.h - 1) / (h - 1);
-    for(k = 0; k < im.c; ++k){
-        for(r = 0; r < im.h; ++r){
-            for(c = 0; c < w; ++c){
-                float val = 0;
-                if(c == w-1 || im.w == 1){
-                    val = get_pixel(im, im.w-1, r, k);
-                } else {
-                    float sx = c*w_scale;
-                    int ix = (int) sx;
-                    float dx = sx - ix;
-                    val = (1 - dx) * get_pixel(im, ix, r, k) + dx * get_pixel(im, ix+1, r, k);
-                }
-                set_pixel(part, c, r, k, val);
-            }
-        }
-    }
-    for(k = 0; k < im.c; ++k){
-        for(r = 0; r < h; ++r){
-            float sy = r*h_scale;
-            int iy = (int) sy;
-            float dy = sy - iy;
-            for(c = 0; c < w; ++c){
-                float val = (1-dy) * get_pixel(part, c, iy, k);
-                set_pixel(resized, c, r, k, val);
-            }
-            if(r == h-1 || im.h == 1) continue;
-            for(c = 0; c < w; ++c){
-                float val = dy * get_pixel(part, c, iy+1, k);
-                add_pixel(resized, c, r, k, val);
-            }
-        }
-    }
-
-    free_image(part);
-    return resized;
-}
-
-static void fill_image(image m, float s)
-{
-    int i;
-    for(i = 0; i < m.h*m.w*m.c; ++i) m.data[i] = s;
-}
-
-static void embed_image(image source, image dest, int dx, int dy)
-{
-    int x,y,k;
-    for(k = 0; k < source.c; ++k){
-        for(y = 0; y < source.h; ++y){
-            for(x = 0; x < source.w; ++x){
-                float val = get_pixel(source, x,y,k);
-                set_pixel(dest, dx+x, dy+y, k, val);
-            }
-        }
-    }
-}
-
-static void free_image(image m)
-{
-    if(m.data){
-        free(m.data);
-    }
-}
-
-static image letterbox_image(image im, int w, int h)
-{
-    int new_w = im.w;
-    int new_h = im.h;
-    if (((float)w/im.w) < ((float)h/im.h)) {
-        new_w = w;
-        new_h = (im.h * w)/im.w;
-    } else {
-        new_h = h;
-        new_w = (im.w * h)/im.h;
-    }
-    image resized = resize_image(im, new_w, new_h);
-    image boxed = make_image(w, h, im.c);
-    fill_image(boxed, .5);
-    embed_image(resized, boxed, (w-new_w)/2, (h-new_h)/2); 
-    free_image(resized);
-    return boxed;
 }
 
 static float *cuda_make_array(float *x, size_t n)
