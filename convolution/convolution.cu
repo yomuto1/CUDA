@@ -118,6 +118,7 @@ int main(void)
     int i, j, k;
     size_t fread_return;
     clock_t clk_srt, clk_end;
+    cudaError_t status;
 
     printf("yolo reference CUDA code by Hyuk Lee\n");
 
@@ -232,12 +233,17 @@ int main(void)
     fread_return = fread(sa_image_in_u08, WID_SRC * HEI_SRC * CHN_SRC, sizeof(unsigned char), fp);
     fclose(fp);
 
-    sp_gpu_workspace_f32 = cuda_make_array(sa_tmp_buf_f32, SIZE_MAX_WORKSPACE);
+    status = cudaMallocHost((void **)&sp_gpu_workspace_f32, SIZE_MAX_WORKSPACE * sizeof(float));
+    check_error(status);
     sp_gpu_input_f32 = cuda_make_array(sa_tmp_buf_f32, WID_SIZED * HEI_SIZED * CHN_SRC);
-    cudaMalloc((void **)&sp_gpu_image_in_u08, WID_SRC * HEI_SRC * CHN_SRC * sizeof(unsigned char));
-    cudaMalloc((void **)&sp_gpu_image_in_f32, WID_SRC * HEI_SRC * CHN_SRC * sizeof(float));
-    cudaMalloc((void **)&sp_gpu_resized_f32, 608 * 456 * 3 * sizeof(float));
-    cudaMalloc((void **)&sp_gpu_part_f32, 608 * 576 * 3 * sizeof(float));
+    status = cudaMalloc((void **)&sp_gpu_image_in_u08, WID_SRC * HEI_SRC * CHN_SRC * sizeof(unsigned char));
+    check_error(status);
+    status = cudaMalloc((void **)&sp_gpu_image_in_f32, WID_SRC * HEI_SRC * CHN_SRC * sizeof(float));
+    check_error(status);
+    status = cudaMalloc((void **)&sp_gpu_resized_f32, 608 * 456 * 3 * sizeof(float));
+    check_error(status);
+    status = cudaMalloc((void **)&sp_gpu_part_f32, 608 * 576 * 3 * sizeof(float));
+    check_error(status);
 
     clk_srt = clock();
     yolo_main(sa_out_f32, sa_image_in_u08);
@@ -317,7 +323,7 @@ int main(void)
     }
 
     cudaFree(sp_gpu_input_f32);
-    cudaFree(sp_gpu_workspace_f32);
+    cudaFreeHost(sp_gpu_workspace_f32);
     cudaFree(sp_gpu_image_in_u08);
     cudaFree(sp_gpu_image_in_f32);
     cudaFree(sp_gpu_resized_f32);
