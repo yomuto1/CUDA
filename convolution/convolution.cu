@@ -16,6 +16,7 @@
 #define WID_DST (19)
 #define HEI_DST (19)
 #define CHN_DST (425)
+#define MAX_OUT (11829248)
 
 #define SIZE_MAX_WORKSPACE (30000000)
 #define NUM_LAYER (32)
@@ -60,7 +61,11 @@ static float *spa_mean_f32[NUM_LAYER];
 static float *spa_variance_f32[NUM_LAYER];
 static float *spa_scales_f32[NUM_LAYER];
 static float *spa_biases_f32[NUM_LAYER];
-static float *sp_gpu_out_f32[NUM_LAYER];
+static float *sp_gpu_int_0_f32;
+static float *sp_gpu_int_1_f32;
+static float *sp_gpu_int_16_f32;
+static float *sp_gpu_int_24_f32;
+static float *sp_gpu_int_27_f32;
 static float *sp_gpu_weights_f32[NUM_LAYER];
 static float *sp_gpu_mean_f32[NUM_LAYER];
 static float *sp_gpu_variance_f32[NUM_LAYER];
@@ -179,6 +184,11 @@ int main(void)
         printf("yolo_gpu_results fopen error\n");
         return -1;
     }
+    status = cudaMallocHost((void **)&sp_gpu_int_0_f32, MAX_OUT * sizeof(float));
+    status = cudaMallocHost((void **)&sp_gpu_int_1_f32, MAX_OUT * sizeof(float));
+    status = cudaMalloc((void **)&sp_gpu_int_16_f32, MAX_OUT * sizeof(float));
+    status = cudaMalloc((void **)&sp_gpu_int_24_f32, MAX_OUT * sizeof(float));
+    status = cudaMalloc((void **)&sp_gpu_int_27_f32, MAX_OUT * sizeof(float));
     for(i = 0; i < NUM_LAYER; i++)
     {
         fread_return = fread(&sa_typ_s32[i], 1, sizeof(int), fp_netinfo);        
@@ -190,7 +200,6 @@ int main(void)
         fread_return = fread(&sa_ibn_s32[i], 1, sizeof(int), fp_netinfo);        
         fread_return = fread(&sa_nwe_s32[i], 1, sizeof(int), fp_netinfo);        
         spa_out_f32[i] = (float *)malloc(sa_wid_s32[i] * sa_hei_s32[i] * sa_chn_s32[i] * sizeof(float));
-        sp_gpu_out_f32[i] = cuda_make_array(spa_out_f32[i], sa_wid_s32[i] * sa_hei_s32[i] * sa_chn_s32[i]);
         if(sa_typ_s32[i] == 0) /* convolutional */
         {
             spa_weights_f32[i] = (float *)malloc(sa_nwe_s32[i] * sizeof(float));
@@ -299,10 +308,14 @@ int main(void)
         printf("problem on fread\n");
     }
 
+    cudaFreeHost(sp_gpu_int_0_f32);
+    cudaFreeHost(sp_gpu_int_1_f32);
+    cudaFree(sp_gpu_int_16_f32);
+    cudaFree(sp_gpu_int_24_f32);
+    cudaFree(sp_gpu_int_27_f32);
     for(i = 0; i < NUM_LAYER; i++)
     {
         free(spa_out_f32[i]);
-        cudaFree(sp_gpu_out_f32[i]);
         if(sa_typ_s32[i] == 0) /* convolutional */
         {
             free(spa_weights_f32[i]);
@@ -479,103 +492,103 @@ static void yolo_main(float *p_out_f32, unsigned char *p_image_in_u08)
 #endif
 
     l = 0;
-    forward_convolutional_layer_gpu(sp_gpu_out_f32[l], sp_gpu_input_f32, sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], CHN_SRC, sa_wid_s32[l], sa_hei_s32[l], WID_SIZED, HEI_SIZED, 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
+    forward_convolutional_layer_gpu(sp_gpu_int_0_f32, sp_gpu_input_f32, sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], CHN_SRC, sa_wid_s32[l], sa_hei_s32[l], WID_SIZED, HEI_SIZED, 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
 
     l = 1;
-    forward_maxpool_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], sa_wid_s32[l], sa_hei_s32[l], 1, sa_wid_s32[l - 1], sa_hei_s32[l - 1], sa_chn_s32[l], 2, 2, 0);
+    forward_maxpool_layer_gpu(sp_gpu_int_1_f32, sp_gpu_int_0_f32, sa_wid_s32[l], sa_hei_s32[l], 1, sa_wid_s32[l - 1], sa_hei_s32[l - 1], sa_chn_s32[l], 2, 2, 0);
 
     l = 2;
-    forward_convolutional_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
+    forward_convolutional_layer_gpu(sp_gpu_int_0_f32, sp_gpu_int_1_f32, sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
 
     l = 3;
-    forward_maxpool_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], sa_wid_s32[l], sa_hei_s32[l], 1, sa_wid_s32[l - 1], sa_hei_s32[l - 1], sa_chn_s32[l], 2, 2, 0);
+    forward_maxpool_layer_gpu(sp_gpu_int_1_f32, sp_gpu_int_0_f32, sa_wid_s32[l], sa_hei_s32[l], 1, sa_wid_s32[l - 1], sa_hei_s32[l - 1], sa_chn_s32[l], 2, 2, 0);
 
 
     l = 4;
-    forward_convolutional_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
+    forward_convolutional_layer_gpu(sp_gpu_int_0_f32, sp_gpu_int_1_f32, sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
 
     l = 5;
-    forward_convolutional_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
+    forward_convolutional_layer_gpu(sp_gpu_int_1_f32, sp_gpu_int_0_f32, sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
 
     l = 6;
-    forward_convolutional_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
+    forward_convolutional_layer_gpu(sp_gpu_int_0_f32, sp_gpu_int_1_f32, sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
 
     l = 7;
-    forward_maxpool_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], sa_wid_s32[l], sa_hei_s32[l], 1, sa_wid_s32[l - 1], sa_hei_s32[l - 1], sa_chn_s32[l], 2, 2, 0);
+    forward_maxpool_layer_gpu(sp_gpu_int_1_f32, sp_gpu_int_0_f32, sa_wid_s32[l], sa_hei_s32[l], 1, sa_wid_s32[l - 1], sa_hei_s32[l - 1], sa_chn_s32[l], 2, 2, 0);
 
     l = 8;
-    forward_convolutional_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
+    forward_convolutional_layer_gpu(sp_gpu_int_0_f32, sp_gpu_int_1_f32, sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
 
     l = 9;
-    forward_convolutional_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
+    forward_convolutional_layer_gpu(sp_gpu_int_1_f32, sp_gpu_int_0_f32, sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
 
     l = 10;
-    forward_convolutional_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
+    forward_convolutional_layer_gpu(sp_gpu_int_0_f32, sp_gpu_int_1_f32, sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
 
     l = 11;
-    forward_maxpool_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], sa_wid_s32[l], sa_hei_s32[l], 1, sa_wid_s32[l - 1], sa_hei_s32[l - 1], sa_chn_s32[l], 2, 2, 0);
+    forward_maxpool_layer_gpu(sp_gpu_int_1_f32, sp_gpu_int_0_f32, sa_wid_s32[l], sa_hei_s32[l], 1, sa_wid_s32[l - 1], sa_hei_s32[l - 1], sa_chn_s32[l], 2, 2, 0);
 
     l = 12;
-    forward_convolutional_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
+    forward_convolutional_layer_gpu(sp_gpu_int_0_f32, sp_gpu_int_1_f32, sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
 
     l = 13;
-    forward_convolutional_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
+    forward_convolutional_layer_gpu(sp_gpu_int_1_f32, sp_gpu_int_0_f32, sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
 
     l = 14;
-    forward_convolutional_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
+    forward_convolutional_layer_gpu(sp_gpu_int_0_f32, sp_gpu_int_1_f32, sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
 
     l = 15;
-    forward_convolutional_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
+    forward_convolutional_layer_gpu(sp_gpu_int_1_f32, sp_gpu_int_0_f32, sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
 
     l = 16;
-    forward_convolutional_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
+    forward_convolutional_layer_gpu(sp_gpu_int_16_f32, sp_gpu_int_1_f32, sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
 
     l = 17;
-    forward_maxpool_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], sa_wid_s32[l], sa_hei_s32[l], 1, sa_wid_s32[l - 1], sa_hei_s32[l - 1], sa_chn_s32[l], 2, 2, 0);
+    forward_maxpool_layer_gpu(sp_gpu_int_1_f32, sp_gpu_int_16_f32, sa_wid_s32[l], sa_hei_s32[l], 1, sa_wid_s32[l - 1], sa_hei_s32[l - 1], sa_chn_s32[l], 2, 2, 0);
 
     l = 18;
-    forward_convolutional_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
+    forward_convolutional_layer_gpu(sp_gpu_int_0_f32, sp_gpu_int_1_f32, sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
 
     l = 19;
-    forward_convolutional_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
+    forward_convolutional_layer_gpu(sp_gpu_int_1_f32, sp_gpu_int_0_f32, sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
 
     l = 20;
-    forward_convolutional_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
+    forward_convolutional_layer_gpu(sp_gpu_int_0_f32, sp_gpu_int_1_f32, sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
 
     l = 21;
-    forward_convolutional_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
+    forward_convolutional_layer_gpu(sp_gpu_int_1_f32, sp_gpu_int_0_f32, sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
 
     l = 22;
-    forward_convolutional_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
+    forward_convolutional_layer_gpu(sp_gpu_int_0_f32, sp_gpu_int_1_f32, sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
 
     l = 23;
-    forward_convolutional_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
+    forward_convolutional_layer_gpu(sp_gpu_int_1_f32, sp_gpu_int_0_f32, sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
 
     l = 24;
-    forward_convolutional_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
+    forward_convolutional_layer_gpu(sp_gpu_int_24_f32, sp_gpu_int_1_f32, sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
 
     l = 25;
-    forward_route_layer_25_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[16]);
+    forward_route_layer_25_gpu(sp_gpu_int_0_f32, sp_gpu_int_16_f32);
 
     l = 26;
-    forward_convolutional_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
+    forward_convolutional_layer_gpu(sp_gpu_int_1_f32, sp_gpu_int_0_f32, sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
 
     l = 27;
-    forward_reorg_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], sa_wid_s32[l - 1], sa_hei_s32[l - 1], sa_chn_s32[l - 1], 1, 2);
+    forward_reorg_layer_gpu(sp_gpu_int_27_f32, sp_gpu_int_1_f32, sa_wid_s32[l - 1], sa_hei_s32[l - 1], sa_chn_s32[l - 1], 1, 2);
 
     l = 28;
-    forward_route_layer_28_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[27], sp_gpu_out_f32[24]);
+    forward_route_layer_28_gpu(sp_gpu_int_0_f32, sp_gpu_int_27_f32, sp_gpu_int_24_f32);
 
     l = 29;
-    forward_convolutional_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
+    forward_convolutional_layer_gpu(sp_gpu_int_1_f32, sp_gpu_int_0_f32, sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
 
     l = 30;
-    forward_convolutional_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LINEAR);
+    forward_convolutional_layer_gpu(sp_gpu_int_0_f32, sp_gpu_int_1_f32, sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], sa_chn_s32[l - 1], sa_wid_s32[l], sa_hei_s32[l], sa_wid_s32[l - 1], sa_hei_s32[l - 1], 1, sa_pad_s32[l], sa_ibn_s32[l], LINEAR);
 
     l = 31;
-    forward_region_layer_gpu(sp_gpu_out_f32[l], sp_gpu_out_f32[l - 1], spa_out_f32[l], 1, sa_wid_s32[l - 1] * sa_hei_s32[l - 1] * sa_chn_s32[l - 1], 5, sa_wid_s32[l - 1], sa_hei_s32[l - 1], 4, 0, 80, sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l]);
+    forward_region_layer_gpu(sp_gpu_int_1_f32, sp_gpu_int_0_f32, spa_out_f32[l], 1, sa_wid_s32[l - 1] * sa_hei_s32[l - 1] * sa_chn_s32[l - 1], 5, sa_wid_s32[l - 1], sa_hei_s32[l - 1], 4, 0, 80, sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l]);
 
-    cudaMemcpy(p_out_f32, sp_gpu_out_f32[l], WID_DST * HEI_DST * CHN_DST * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(p_out_f32, sp_gpu_int_1_f32, WID_DST * HEI_DST * CHN_DST * sizeof(float), cudaMemcpyDeviceToHost);
 }
 
 static float *cuda_make_array(float *x, size_t n)
