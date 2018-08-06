@@ -49,7 +49,8 @@ static int sa_ker_s32[NUM_LAYER];
 static int sa_pad_s32[NUM_LAYER];
 static int sa_ibn_s32[NUM_LAYER];
 static int sa_nwe_s32[NUM_LAYER];
-static unsigned char sa_image_in_u08[WID_SRC * HEI_SRC * CHN_SRC];
+static unsigned char sa_image_in_0_u08[WID_SRC * HEI_SRC * CHN_SRC];
+static unsigned char sa_image_in_1_u08[WID_SRC * HEI_SRC * CHN_SRC];
 #if (1 == CHK_INTER_LAYER)
 static float sa_image_sized_f32[WID_SIZED * HEI_SIZED * CHN_SRC];
 #endif
@@ -184,8 +185,8 @@ int main(void)
         printf("yolo_gpu_results fopen error\n");
         return -1;
     }
-    status = cudaMallocHost((void **)&sp_gpu_int_0_f32, MAX_OUT * sizeof(float));
-    status = cudaMallocHost((void **)&sp_gpu_int_1_f32, MAX_OUT * sizeof(float));
+    status = cudaMalloc((void **)&sp_gpu_int_0_f32, MAX_OUT * sizeof(float));
+    status = cudaMalloc((void **)&sp_gpu_int_1_f32, MAX_OUT * sizeof(float));
     status = cudaMalloc((void **)&sp_gpu_int_16_f32, MAX_OUT * sizeof(float));
     status = cudaMalloc((void **)&sp_gpu_int_24_f32, MAX_OUT * sizeof(float));
     status = cudaMalloc((void **)&sp_gpu_int_27_f32, MAX_OUT * sizeof(float));
@@ -239,10 +240,10 @@ int main(void)
         printf("yolo_image_in fopen error\n");
         return -1;
     }
-    fread_return = fread(sa_image_in_u08, WID_SRC * HEI_SRC * CHN_SRC, sizeof(unsigned char), fp);
+    fread_return = fread(sa_image_in_0_u08, WID_SRC * HEI_SRC * CHN_SRC, sizeof(unsigned char), fp);
     fclose(fp);
 
-    status = cudaMallocHost((void **)&sp_gpu_workspace_f32, SIZE_MAX_WORKSPACE * sizeof(float));
+    status = cudaMalloc((void **)&sp_gpu_workspace_f32, SIZE_MAX_WORKSPACE * sizeof(float));
     check_error(status);
     sp_gpu_input_f32 = cuda_make_array(sa_tmp_buf_f32, WID_SIZED * HEI_SIZED * CHN_SRC);
     status = cudaMalloc((void **)&sp_gpu_image_in_u08, WID_SRC * HEI_SRC * CHN_SRC * sizeof(unsigned char));
@@ -255,7 +256,7 @@ int main(void)
     check_error(status);
 
     clk_srt = clock();
-    yolo_main(sa_out_f32, sa_image_in_u08);
+    yolo_main(sa_out_f32, sa_image_in_0_u08);
     clk_end = clock();
     printf("yolo 1: %f s\n", (double)(clk_end - clk_srt) / CLOCKS_PER_SEC);
 
@@ -280,8 +281,11 @@ int main(void)
     }
 #endif
 
+    memcpy(sa_image_in_1_u08, sa_image_in_0_u08, WID_SRC * HEI_SRC * CHN_SRC * sizeof(unsigned char));
+    memset(sa_out_f32, 0, WID_DST * HEI_DST * CHN_DST * sizeof(float));
+
     clk_srt = clock();
-    yolo_main(sa_out_f32, sa_image_in_u08);
+    yolo_main(sa_out_f32, sa_image_in_1_u08);
     clk_end = clock();
     printf("yolo 2: %f s\n", (double)(clk_end - clk_srt) / CLOCKS_PER_SEC);
 
@@ -308,8 +312,8 @@ int main(void)
         printf("problem on fread\n");
     }
 
-    cudaFreeHost(sp_gpu_int_0_f32);
-    cudaFreeHost(sp_gpu_int_1_f32);
+    cudaFree(sp_gpu_int_0_f32);
+    cudaFree(sp_gpu_int_1_f32);
     cudaFree(sp_gpu_int_16_f32);
     cudaFree(sp_gpu_int_24_f32);
     cudaFree(sp_gpu_int_27_f32);
@@ -336,7 +340,7 @@ int main(void)
     }
 
     cudaFree(sp_gpu_input_f32);
-    cudaFreeHost(sp_gpu_workspace_f32);
+    cudaFree(sp_gpu_workspace_f32);
     cudaFree(sp_gpu_image_in_u08);
     cudaFree(sp_gpu_image_in_f32);
     cudaFree(sp_gpu_resized_f32);
