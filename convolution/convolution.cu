@@ -275,6 +275,7 @@ int main(void)
             }
         }
     }
+#endif
 
 #if (1 == CHK_INTER_LAYER)
     for(i = 0; i < NUM_LAYER - 1; i++)
@@ -291,6 +292,7 @@ int main(void)
     clk_end = clock();
     printf("yolo 2: %f s\n", (double)(clk_end - clk_srt) / CLOCKS_PER_SEC);
 
+#if 0
     for(k = 0; k < CHN_DST; k++)
     {
         for(j = 0; j < HEI_DST; j++)
@@ -741,16 +743,12 @@ __global__ void convolution_kernel(float *p_out_f32, const float *p_in_f32, cons
                             x = (i - pad_s32) + kw;
                             y = (j - pad_s32) + kh;
 
-                            if((x < 0) || (x >= wid_in_s32) || (y < 0) || (y >= hei_in_s32))
-                            {
-                                src_f32 = 0.f;
-                            }
-                            else
+                            if((x >= 0) && (x < wid_in_s32) && (y >= 0) && (y < hei_in_s32))
                             {
                                 src_f32 = p_in_f32[ci * wid_in_s32 * hei_in_s32 + (j - pad_s32 + kh) * wid_in_s32 + (i - pad_s32) + kw];
+                                wei_f32 = p_weights_f32[co * ker_s32 * ker_s32 * chn_in_s32 + ci * ker_s32 * ker_s32 + kh * ker_s32 + kw];
+                                acc_f32 += src_f32 * wei_f32;
                             }
-                            wei_f32 = p_weights_f32[co * ker_s32 * ker_s32 * chn_in_s32 + ci * ker_s32 * ker_s32 + kh * ker_s32 + kw];
-                            acc_f32 += src_f32 * wei_f32;
                         }
                     }
                 }
@@ -762,6 +760,7 @@ __global__ void convolution_kernel(float *p_out_f32, const float *p_in_f32, cons
 
 static void forward_convolutional_layer_gpu(float *l_output_gpu, float *input_gpu, float *l_weights_gpu, float *workspace_gpu, float *mean_gpu, float *variance_gpu, float *scales_gpu, float *biases_gpu, int l_outputs, int l_n, int l_size, int l_c, int l_out_w, int l_out_h, int l_w, int l_h, int l_stride, int l_pad, int l_batch_normalize, ACTIVATION l_activation)
 {
+#if 1
     fill_gpu(l_outputs, 0, l_output_gpu, 1);
 
 #ifdef CUDNN
@@ -792,7 +791,7 @@ static void forward_convolutional_layer_gpu(float *l_output_gpu, float *input_gp
         l_c, l_h, l_w, l_size, l_stride, l_pad, b);
     gemm_gpu(0,0,m,n,k,1,a,k,b,n,1,c,n);
 #endif
-
+#else
     {
         static float sa_src_f32[WID_SIZED * HEI_SIZED * CHN_SRC];
         static float sa_dst_f32[WID_SIZED * HEI_SIZED * 32];
@@ -802,9 +801,9 @@ static void forward_convolutional_layer_gpu(float *l_output_gpu, float *input_gp
         dim3 threadsperblock(64, 32); // 2048
         dim3 numblocks(8, 4); // 32
 
-        cudaMemcpy(sa_ref_f32, l_output_gpu, l_out_w * l_out_h * 32 * sizeof(float), cudaMemcpyDeviceToHost);
+        //cudaMemcpy(sa_ref_f32, l_output_gpu, l_out_w * l_out_h * 32 * sizeof(float), cudaMemcpyDeviceToHost);
 
-#if 1
+#if 0
         cudaMemcpy(sa_src_f32, input_gpu, WID_SIZED * HEI_SIZED * CHN_SRC * sizeof(float), cudaMemcpyDeviceToHost);
         cudaMemcpy(sa_wei_f32, l_weights_gpu, l_size * l_size * l_c * 32 * sizeof(float), cudaMemcpyDeviceToHost);
 
@@ -812,9 +811,10 @@ static void forward_convolutional_layer_gpu(float *l_output_gpu, float *input_gp
 #else
         convolution_kernel<<<threadsperblock, numblocks>>>(l_output_gpu, input_gpu, l_weights_gpu, l_c, l_w, l_h, 32, l_out_w, l_out_h, l_size, l_pad);
 
-        cudaMemcpy(sa_dst_f32, l_output_gpu, l_out_w * l_out_h * 32 * sizeof(float), cudaMemcpyDeviceToHost);
+        //cudaMemcpy(sa_dst_f32, l_output_gpu, l_out_w * l_out_h * 32 * sizeof(float), cudaMemcpyDeviceToHost);
 #endif
 
+#if 0
         for(k = 0; k < 32; k++)
         {
             for(j = 0; j < l_out_h; j++)
@@ -828,7 +828,9 @@ static void forward_convolutional_layer_gpu(float *l_output_gpu, float *input_gp
                 }
             }
         }
+#endif
     }
+#endif
 
     if (l_batch_normalize) {
         normalize_gpu(l_output_gpu, mean_gpu, variance_gpu, 1, l_n, l_out_w * l_out_h);
