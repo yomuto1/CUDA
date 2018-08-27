@@ -85,6 +85,7 @@ static dim3 cuda_gridsize(size_t n);
 static void im2col_gpu(float *im, int channels, int height, int width, int ksize, int stride, int pad, float *data_col);
 static void gemm_gpu(int TA, int TB, int M, int N, int K, float ALPHA, float *A_gpu, int lda, float *B_gpu, int ldb, float BETA, float *C_gpu, int ldc);
 static void forward_convolutional_layer_gpu(float *l_output_gpu, float *input_gpu, float *l_weights_gpu, float *workspace_gpu, float *mean_gpu, float *variance_gpu, float *scales_gpu, float *biases_gpu, int l_outputs, int l_n, int l_size, int l_c, int l_out_w, int l_out_h, int l_w, int l_h, int l_stride, int l_pad, int l_batch_normalize, ACTIVATION l_activation);
+static void convolution_ref_c(float * __restrict p_out_f32, const float * __restrict p_in_f32, const float * __restrict p_weights_f32, const int chn_in_s32, const int wid_in_s32, const int hei_in_s32, const int chn_out_s32, const int wid_out_s32, const int hei_out_s32, const int ker_s32, const int pad_s32);
 static cublasHandle_t blas_handle();
 static int cuda_get_device();
 static void normalize_gpu(float *x, float *mean, float *variance, int batch, int filters, int spatial);
@@ -260,6 +261,7 @@ int main(void)
     clk_end = clock();
     printf("yolo 1: %f s\n", (double)(clk_end - clk_srt) / CLOCKS_PER_SEC);
 
+#if 0
     for(k = 0; k < CHN_DST; k++)
     {
         for(j = 0; j < HEI_DST; j++)
@@ -302,6 +304,7 @@ int main(void)
             }
         }
     }
+#endif
 
 #if (1 == DEBUG_WRITING)
     fclose(fp_fprintf_debug);
@@ -498,6 +501,7 @@ static void yolo_main(float *p_out_f32, unsigned char *p_image_in_u08)
     l = 0;
     forward_convolutional_layer_gpu(sp_gpu_int_0_f32, sp_gpu_input_f32, sp_gpu_weights_f32[l], sp_gpu_workspace_f32, sp_gpu_mean_f32[l], sp_gpu_variance_f32[l], sp_gpu_scales_f32[l], sp_gpu_biases_f32[l], sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l], sa_chn_s32[l], sa_ker_s32[l], CHN_SRC, sa_wid_s32[l], sa_hei_s32[l], WID_SIZED, HEI_SIZED, 1, sa_pad_s32[l], sa_ibn_s32[l], LEAKY);
 
+#if 0
     l = 1;
     forward_maxpool_layer_gpu(sp_gpu_int_1_f32, sp_gpu_int_0_f32, sa_wid_s32[l], sa_hei_s32[l], 1, sa_wid_s32[l - 1], sa_hei_s32[l - 1], sa_chn_s32[l], 2, 2, 0);
 
@@ -591,6 +595,7 @@ static void yolo_main(float *p_out_f32, unsigned char *p_image_in_u08)
 
     l = 31;
     forward_region_layer_gpu(sp_gpu_int_1_f32, sp_gpu_int_0_f32, spa_out_f32[l], 1, sa_wid_s32[l - 1] * sa_hei_s32[l - 1] * sa_chn_s32[l - 1], 5, sa_wid_s32[l - 1], sa_hei_s32[l - 1], 4, 0, 80, sa_wid_s32[l] * sa_hei_s32[l] * sa_chn_s32[l]);
+#endif
 
     cudaMemcpy(p_out_f32, sp_gpu_int_1_f32, WID_DST * HEI_DST * CHN_DST * sizeof(float), cudaMemcpyDeviceToHost);
 }
@@ -709,6 +714,52 @@ static void gemm_gpu(int TA, int TB, int M, int N, int K, float ALPHA, float *A_
             (TA ? CUBLAS_OP_T : CUBLAS_OP_N), N, M, K, &ALPHA, B_gpu, ldb, A_gpu, lda, &BETA, C_gpu, ldc);
 }
 
+__global__ void convolution_kernel(float *p_out_f32, const float *p_in_f32, const float *p_weights_f32, const int chn_in_s32, const int wid_in_s32, const int hei_in_s32, const int chn_out_s32, const int wid_out_s32, const int hei_out_s32, const int ker_s32, const int pad_s32)
+{
+    int threadIdx_x_s32 = threadIdx.x;
+    int threadIdx_y_s32 = threadIdx.y;
+    int i = blockIdx.x * blockDim.x + threadIdx_x_s32;
+    int j = blockIdx.y * blockDim.y + threadIdx_y_s32;
+    int ci, co, kw, kh, x, y;
+    float src_f32;
+    float wei_f32;
+    float acc_f32;
+
+    for(co = 0; co < chn_out_s32; co++)
+    {
+        if(j < hei_out_s32)
+        {
+            if(i < wid_out_s32)
+            {
+                acc_f32 = 0.0f;
+                for(ci = 0; ci < chn_in_s32; ci++)
+                {
+                    for(kh = 0; kh < ker_s32; kh++)
+                    {
+                        for(kw = 0; kw < ker_s32; kw++)
+                        {
+                            x = (i - pad_s32) + kw;
+                            y = (j - pad_s32) + kh;
+
+                            if((x < 0) || (x >= wid_in_s32) || (y < 0) || (y >= hei_in_s32))
+                            {
+                                src_f32 = 0.f;
+                            }
+                            else
+                            {
+                                src_f32 = p_in_f32[ci * wid_in_s32 * hei_in_s32 + (j - pad_s32 + kh) * wid_in_s32 + (i - pad_s32) + kw];
+                            }
+                            wei_f32 = p_weights_f32[co * ker_s32 * ker_s32 * chn_in_s32 + ci * ker_s32 * ker_s32 + kh * ker_s32 + kw];
+                            acc_f32 += src_f32 * wei_f32;
+                        }
+                    }
+                }
+                p_out_f32[co * wid_out_s32 * hei_out_s32 + j * wid_out_s32 + i] = acc_f32;
+            }
+        }
+    } 
+}
+
 static void forward_convolutional_layer_gpu(float *l_output_gpu, float *input_gpu, float *l_weights_gpu, float *workspace_gpu, float *mean_gpu, float *variance_gpu, float *scales_gpu, float *biases_gpu, int l_outputs, int l_n, int l_size, int l_c, int l_out_w, int l_out_h, int l_w, int l_h, int l_stride, int l_pad, int l_batch_normalize, ACTIVATION l_activation)
 {
     fill_gpu(l_outputs, 0, l_output_gpu, 1);
@@ -742,6 +793,43 @@ static void forward_convolutional_layer_gpu(float *l_output_gpu, float *input_gp
     gemm_gpu(0,0,m,n,k,1,a,k,b,n,1,c,n);
 #endif
 
+    {
+        static float sa_src_f32[WID_SIZED * HEI_SIZED * CHN_SRC];
+        static float sa_dst_f32[WID_SIZED * HEI_SIZED * 32];
+        static float sa_wei_f32[3 * 3 * 3 * 32];
+        static float sa_ref_f32[WID_SIZED * HEI_SIZED * 32];
+        int i, j, k;
+        dim3 threadsperblock(64, 32); // 2048
+        dim3 numblocks(8, 4); // 32
+
+        cudaMemcpy(sa_ref_f32, l_output_gpu, l_out_w * l_out_h * 32 * sizeof(float), cudaMemcpyDeviceToHost);
+
+#if 1
+        cudaMemcpy(sa_src_f32, input_gpu, WID_SIZED * HEI_SIZED * CHN_SRC * sizeof(float), cudaMemcpyDeviceToHost);
+        cudaMemcpy(sa_wei_f32, l_weights_gpu, l_size * l_size * l_c * 32 * sizeof(float), cudaMemcpyDeviceToHost);
+
+        convolution_ref_c(sa_dst_f32, sa_src_f32, sa_wei_f32, l_c, l_w, l_h, 32, l_out_w, l_out_h, l_size, l_pad);
+#else
+        convolution_kernel<<<threadsperblock, numblocks>>>(l_output_gpu, input_gpu, l_weights_gpu, l_c, l_w, l_h, 32, l_out_w, l_out_h, l_size, l_pad);
+
+        cudaMemcpy(sa_dst_f32, l_output_gpu, l_out_w * l_out_h * 32 * sizeof(float), cudaMemcpyDeviceToHost);
+#endif
+
+        for(k = 0; k < 32; k++)
+        {
+            for(j = 0; j < l_out_h; j++)
+            {
+                for(i = 0; i < l_out_w; i++)
+                {
+                    if(fabsf(sa_dst_f32[i + j * l_out_w + k * l_out_w * l_out_h] - sa_ref_f32[i + j * l_out_w + k * l_out_w * l_out_h]) > ACCEPTABLE_DIFF)
+                    {
+                        printf("mismatch: w %d, h %d, c %d, out %f, GT %f\n", i, j, k, sa_dst_f32[i + j * l_out_w + k * l_out_w * l_out_h] , sa_ref_f32[i + j * l_out_w + k * l_out_w * l_out_h]);
+                    }
+                }
+            }
+        }
+    }
+
     if (l_batch_normalize) {
         normalize_gpu(l_output_gpu, mean_gpu, variance_gpu, 1, l_n, l_out_w * l_out_h);
         scale_bias_gpu(l_output_gpu, scales_gpu, 1, l_n, l_out_w * l_out_h);
@@ -751,6 +839,54 @@ static void forward_convolutional_layer_gpu(float *l_output_gpu, float *input_gp
     }
 
     activate_array_gpu(l_output_gpu, l_outputs, l_activation);
+}
+
+static void convolution_ref_c(float * __restrict p_out_f32, const float * __restrict p_in_f32, const float * __restrict p_weights_f32, const int chn_in_s32, const int wid_in_s32, const int hei_in_s32, const int chn_out_s32, const int wid_out_s32, const int hei_out_s32, const int ker_s32, const int pad_s32)
+{
+    int i, j, ci, co, kw, kh, x, y;
+    float src_f32;
+    float wei_f32;
+    float acc_f32;
+
+    for(co = 0; co < chn_out_s32; co++)
+    {
+        for(j = 0; j < hei_out_s32; j++)
+        {
+            for(i = 0; i < wid_out_s32; i++)
+            {
+                acc_f32 = 0.0f;
+                for(ci = 0; ci < chn_in_s32; ci++)
+                {
+                    for(kh = 0; kh < ker_s32; kh++)
+                    {
+                        for(kw = 0; kw < ker_s32; kw++)
+                        {
+                            x = (i - pad_s32) + kw;
+                            y = (j - pad_s32) + kh;
+
+                            if((x < 0) || (x >= wid_in_s32) || (y < 0) || (y >= hei_in_s32))
+                            {
+                                src_f32 = 0.f;
+                            }
+                            else
+                            {
+                                src_f32 = p_in_f32[ci * wid_in_s32 * hei_in_s32 + (j - pad_s32 + kh) * wid_in_s32 + (i - pad_s32) + kw];
+                            }
+                            wei_f32 = p_weights_f32[co * ker_s32 * ker_s32 * chn_in_s32 + ci * ker_s32 * ker_s32 + kh * ker_s32 + kw];
+                            acc_f32 += src_f32 * wei_f32;
+#if (1 == DEBUG_WRITING)
+                            if((co == 0) && (ci == 0) && ((j < 20) || ((j > 60) && (j < 80))))
+                            {
+                                fprintf(fp_fprintf_debug, "kw: %d, kh: %d, ci: %d, i: %d, j: %d, in: %f, wei: %f, acc: %f\n", kw, kh, ci, i, j, src_f32, wei_f32, acc_f32);
+                            }
+#endif
+                        }
+                    }
+                }
+                p_out_f32[co * wid_out_s32 * hei_out_s32 + j * wid_out_s32 + i] = acc_f32;
+            }
+        }
+    } 
 }
 
 static cublasHandle_t blas_handle()
