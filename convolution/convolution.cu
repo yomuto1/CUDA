@@ -126,8 +126,26 @@ int main(void)
     size_t fread_return;
     clock_t clk_srt, clk_end;
     cudaError_t status;
+    int nDevices_s32;
 
-    printf("yolo reference CUDA code by Hyuk Lee\n");
+    cudaGetDeviceCount(&nDevices_s32);
+
+    for (i = 0; i < nDevices_s32; i++)
+    {
+        cudaDeviceProp prop;
+        cudaGetDeviceProperties(&prop, i);
+        printf("Device Number: %d\n", i);
+        printf(" Device name: %s\n", prop.name);
+        printf(" Memory Clock Rate (KHz): %d\n", prop.memoryClockRate);
+        printf(" Memory Bus Width (bits): %d\n", prop.memoryBusWidth);
+        printf(" Peak Memory Bandwidth (GB/s): %f\n", 2.0*prop.memoryClockRate*(prop.memoryBusWidth/8)/1.0e6);
+        printf(" totalGlobalMem: %ld\n", prop.totalGlobalMem);
+        printf(" sharedMemPerBlock: %ld\n", prop.sharedMemPerBlock);
+        printf(" regsPerBlock: %d\n", prop.regsPerBlock);
+        printf(" warpSize: %d\n", prop.warpSize);
+    }
+
+    printf("\nyolo reference CUDA code by Hyuk Lee\n");
 
 #if (1 == DEBUG_WRITING)
     fp_fprintf_debug = fopen("ref_c_debug.txt", "w");
@@ -729,7 +747,7 @@ __global__ void convolution_kernel(float *p_out_f32, const float *p_in_f32, cons
     float src_f32;
     float wei_f32;
     float acc_f32;
-    //__shared__ float gpu_sa_src_f32[WID_SIZED * HEI_SIZED * CHN_SRC];
+    //__shared__ float gpu_sa_src_f32[3 * 3 * 3];
     __shared__ float gpu_sa_wei_f32[3 * 3 * 3 * 32];
 
 #if 1
@@ -757,6 +775,7 @@ __global__ void convolution_kernel(float *p_out_f32, const float *p_in_f32, cons
             if(i < wid_out_s32)
             {
                 acc_f32 = 0.0f;
+
                 for(ci = 0; ci < chn_in_s32; ci++)
                 {
                     for(kh = 0; kh < ker_s32; kh++)
@@ -775,6 +794,7 @@ __global__ void convolution_kernel(float *p_out_f32, const float *p_in_f32, cons
                         }
                     }
                 }
+
                 p_out_f32[co * wid_out_s32 * hei_out_s32 + j * wid_out_s32 + i] = acc_f32;
             }
         }
