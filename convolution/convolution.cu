@@ -288,9 +288,12 @@ int main(void)
     memset(sa_out_f32, 0, WID_DST * HEI_DST * CHN_DST * sizeof(float));
 
     clk_srt = clock();
-    yolo_main(sa_out_f32, sa_image_in_1_u08);
+    for(i = 0; i < 100; i++)
+    {
+        yolo_main(sa_out_f32, sa_image_in_1_u08);
+    }
     clk_end = clock();
-    printf("yolo 2: %f s\n", (double)(clk_end - clk_srt) / CLOCKS_PER_SEC);
+    printf("yolo 2 100 times: %f s\n", (double)(clk_end - clk_srt) / CLOCKS_PER_SEC);
 
 #if 0
     for(k = 0; k < CHN_DST; k++)
@@ -726,6 +729,26 @@ __global__ void convolution_kernel(float *p_out_f32, const float *p_in_f32, cons
     float src_f32;
     float wei_f32;
     float acc_f32;
+    //__shared__ float gpu_sa_src_f32[WID_SIZED * HEI_SIZED * CHN_SRC];
+    __shared__ float gpu_sa_wei_f32[3 * 3 * 3 * 32];
+
+#if 1
+    for(co = 0; co < chn_out_s32; co++)
+    {
+        for(ci = 0; ci < chn_in_s32; ci++)
+        {
+            for(kh = 0; kh < ker_s32; kh++)
+            {
+                for(kw = 0; kw < ker_s32; kw++)
+                {
+                    gpu_sa_wei_f32[co * ker_s32 * ker_s32 * chn_in_s32 + ci * ker_s32 * ker_s32 + kh * ker_s32 + kw] = p_weights_f32[co * ker_s32 * ker_s32 * chn_in_s32 + ci * ker_s32 * ker_s32 + kh * ker_s32 + kw];
+                }
+            }
+        }
+    } 
+
+    __syncthreads();
+#endif
 
     for(co = 0; co < chn_out_s32; co++)
     {
@@ -746,7 +769,7 @@ __global__ void convolution_kernel(float *p_out_f32, const float *p_in_f32, cons
                             if((x >= 0) && (x < wid_in_s32) && (y >= 0) && (y < hei_in_s32))
                             {
                                 src_f32 = p_in_f32[ci * wid_in_s32 * hei_in_s32 + (j - pad_s32 + kh) * wid_in_s32 + (i - pad_s32) + kw];
-                                wei_f32 = p_weights_f32[co * ker_s32 * ker_s32 * chn_in_s32 + ci * ker_s32 * ker_s32 + kh * ker_s32 + kw];
+                                wei_f32 = gpu_sa_wei_f32[co * ker_s32 * ker_s32 * chn_in_s32 + ci * ker_s32 * ker_s32 + kh * ker_s32 + kw];
                                 acc_f32 += src_f32 * wei_f32;
                             }
                         }
@@ -760,7 +783,7 @@ __global__ void convolution_kernel(float *p_out_f32, const float *p_in_f32, cons
 
 static void forward_convolutional_layer_gpu(float *l_output_gpu, float *input_gpu, float *l_weights_gpu, float *workspace_gpu, float *mean_gpu, float *variance_gpu, float *scales_gpu, float *biases_gpu, int l_outputs, int l_n, int l_size, int l_c, int l_out_w, int l_out_h, int l_w, int l_h, int l_stride, int l_pad, int l_batch_normalize, ACTIVATION l_activation)
 {
-#if 1
+#if 0
     fill_gpu(l_outputs, 0, l_output_gpu, 1);
 
 #ifdef CUDNN
@@ -791,7 +814,9 @@ static void forward_convolutional_layer_gpu(float *l_output_gpu, float *input_gp
         l_c, l_h, l_w, l_size, l_stride, l_pad, b);
     gemm_gpu(0,0,m,n,k,1,a,k,b,n,1,c,n);
 #endif
-#else
+#endif
+
+#if 1
     {
         static float sa_src_f32[WID_SIZED * HEI_SIZED * CHN_SRC];
         static float sa_dst_f32[WID_SIZED * HEI_SIZED * 32];
