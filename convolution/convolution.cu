@@ -305,13 +305,15 @@ int main(void)
     memcpy(sa_image_in_1_u08, sa_image_in_0_u08, WID_SRC * HEI_SRC * CHN_SRC * sizeof(unsigned char));
     memset(sa_out_f32, 0, WID_DST * HEI_DST * CHN_DST * sizeof(float));
 
+#if 1
     clk_srt = clock();
-    for(i = 0; i < 100; i++)
+    for(i = 0; i < 10; i++)
     {
         yolo_main(sa_out_f32, sa_image_in_1_u08);
     }
     clk_end = clock();
-    printf("yolo 2 100 times: %f s\n", (double)(clk_end - clk_srt) / CLOCKS_PER_SEC);
+    printf("yolo 2 10 times: %f s\n", (double)(clk_end - clk_srt) / CLOCKS_PER_SEC);
+#endif
 
 #if 0
     for(k = 0; k < CHN_DST; k++)
@@ -739,6 +741,83 @@ static void gemm_gpu(int TA, int TB, int M, int N, int K, float ALPHA, float *A_
 
 __global__ void convolution_kernel(float *p_out_f32, const float *p_in_f32, const float *p_weights_f32, const int chn_in_s32, const int wid_in_s32, const int hei_in_s32, const int chn_out_s32, const int wid_out_s32, const int hei_out_s32, const int ker_s32, const int pad_s32)
 {
+    //printf("in convolution_kernel: %d, %d, %d, %d, %d, %d, %d, %d\n", chn_in_s32, wid_in_s32, hei_in_s32, chn_out_s32, wid_out_s32, hei_out_s32, ker_s32, pad_s32);
+
+#if 0
+    int threadIdx_x_s32 = threadIdx.x;
+    int threadIdx_y_s32 = threadIdx.y;
+    int co = blockIdx.x * blockDim.x + threadIdx_x_s32;
+    int i = blockIdx.y * blockDim.y + threadIdx_y_s32;
+    int ci, kw, kh, x, y, j;
+    float wei_f32;
+    float acc_f32;
+    __shared__ float gpu_sa_src_f32[(WID_SIZED + 2) * 3];
+    __shared__ float gpu_sa_wei_f32[3 * 3 * 3 * 32];
+
+    if(co < chn_out_s32)
+    {
+        for(ci = 0; ci < chn_in_s32; ci++)
+        {
+            for(kh = 0; kh < ker_s32; kh++)
+            {
+                for(kw = 0; kw < ker_s32; kw++)
+                {
+                    gpu_sa_wei_f32[co * ker_s32 * ker_s32 * chn_in_s32 + ci * ker_s32 * ker_s32 + kh * ker_s32 + kw] = p_weights_f32[co * ker_s32 * ker_s32 * chn_in_s32 + ci * ker_s32 * ker_s32 + kh * ker_s32 + kw];
+                }
+            }
+        }
+    } 
+
+    __syncthreads();
+
+    if(co < chn_out_s32)
+    {
+        for(ci = 0; ci < chn_in_s32; ci++)
+        {
+            for(kh = 0; kh < ker_s32; kh++)
+            {
+                for(kw = 0; kw < ker_s32; kw++)
+                {
+                    for(j = 0; j < hei_out_s32; j++)
+                    {
+                        if(i < wid_out_s32)
+                        {
+#if 0
+                            x = (i - pad_s32) + kw;
+                            y = (j - pad_s32) + kh;
+
+                            if((x >= 0) && (x < wid_in_s32) && (y >= 0) && (y < hei_in_s32))
+                            {
+                                gpu_sa_src_f32[i] = p_in_f32[ci * wid_in_s32 * hei_in_s32 + y * wid_in_s32 + x];
+                            }
+                            else
+                            {
+                                gpu_sa_src_f32[i] = 0.f;
+                            }
+
+                            __syncthreads();
+#endif
+
+                            x = (i - pad_s32) + kw;
+                            y = (j - pad_s32) + kh;
+
+                            wei_f32 = gpu_sa_wei_f32[co * ker_s32 * ker_s32 * chn_in_s32 + ci * ker_s32 * ker_s32 + kh * ker_s32 + kw];
+
+                            acc_f32 = p_out_f32[co * wid_out_s32 * hei_out_s32 + j * wid_out_s32 + i];
+
+                            if((x >= 0) && (x < wid_in_s32) && (y >= 0) && (y < hei_in_s32))
+                            {
+                                acc_f32 += p_in_f32[ci * wid_in_s32 * hei_in_s32 + (j - pad_s32 + kh) * wid_in_s32 + (i - pad_s32) + kw] * wei_f32;
+                            }
+                            
+                            p_out_f32[co * wid_out_s32 * hei_out_s32 + j * wid_out_s32 + i] = acc_f32;
+                        }
+                    }
+                }
+            }
+        }
+    } 
+#else
     int threadIdx_x_s32 = threadIdx.x;
     int threadIdx_y_s32 = threadIdx.y;
     int i = blockIdx.x * blockDim.x + threadIdx_x_s32;
@@ -790,20 +869,36 @@ __global__ void convolution_kernel(float *p_out_f32, const float *p_in_f32, cons
                                 src_f32 = p_in_f32[ci * wid_in_s32 * hei_in_s32 + (j - pad_s32 + kh) * wid_in_s32 + (i - pad_s32) + kw];
                                 wei_f32 = gpu_sa_wei_f32[co * ker_s32 * ker_s32 * chn_in_s32 + ci * ker_s32 * ker_s32 + kh * ker_s32 + kw];
                                 acc_f32 += src_f32 * wei_f32;
+#if (1 == DEBUG_WRITING)
+                                if((co == 0) && (ci == 0) && ((j < 20) || ((j > 60) && (j < 80))))
+                                {
+                                    printf("kw: %d, kh: %d, ci: %d, i: %d, j: %d, in: %f, wei: %f, acc: %f\n", kw, kh, ci, i, j, src_f32, wei_f32, acc_f32);
+                                }
+#endif
                             }
                         }
                     }
                 }
 
+                __syncthreads();
+
                 p_out_f32[co * wid_out_s32 * hei_out_s32 + j * wid_out_s32 + i] = acc_f32;
+
+#if (1 == DEBUG_WRITING)
+                if((co == 0) && ((j < 20) || ((j > 60) && (j < 80))))
+                {
+                    printf("i: %d, j: %d, out: %f\n", i, j, acc_f32);
+                }
+#endif
             }
         }
     } 
+#endif
 }
 
 static void forward_convolutional_layer_gpu(float *l_output_gpu, float *input_gpu, float *l_weights_gpu, float *workspace_gpu, float *mean_gpu, float *variance_gpu, float *scales_gpu, float *biases_gpu, int l_outputs, int l_n, int l_size, int l_c, int l_out_w, int l_out_h, int l_w, int l_h, int l_stride, int l_pad, int l_batch_normalize, ACTIVATION l_activation)
 {
-#if 0
+#if 1
     fill_gpu(l_outputs, 0, l_output_gpu, 1);
 
 #ifdef CUDNN
@@ -836,17 +931,25 @@ static void forward_convolutional_layer_gpu(float *l_output_gpu, float *input_gp
 #endif
 #endif
 
-#if 1
+#if 0
     {
         static float sa_src_f32[WID_SIZED * HEI_SIZED * CHN_SRC];
-        static float sa_dst_f32[WID_SIZED * HEI_SIZED * 32];
+        static float sa_dst_f32[WID_SIZED * HEI_SIZED * 32] = { 0.f, };
         static float sa_wei_f32[3 * 3 * 3 * 32];
         static float sa_ref_f32[WID_SIZED * HEI_SIZED * 32];
         int i, j, k;
-        dim3 threadsperblock(64, 32); // 2048
-        dim3 numblocks(8, 4); // 32
+#if 0
+        dim3 threadsperblock(2048); // 2048
+        dim3 numblocks(32); // 32
+#else
+        dim3 threadsperblock(32, 32); // 2048
+        dim3 numblocks(19, 19); // 32
+#endif
 
-        //cudaMemcpy(sa_ref_f32, l_output_gpu, l_out_w * l_out_h * 32 * sizeof(float), cudaMemcpyDeviceToHost);
+#if 0
+        cudaMemcpy(sa_ref_f32, l_output_gpu, l_out_w * l_out_h * 32 * sizeof(float), cudaMemcpyDeviceToHost);
+        fill_gpu(l_outputs, 0, l_output_gpu, 1);
+#endif
 
 #if 0
         cudaMemcpy(sa_src_f32, input_gpu, WID_SIZED * HEI_SIZED * CHN_SRC * sizeof(float), cudaMemcpyDeviceToHost);
@@ -897,17 +1000,18 @@ static void convolution_ref_c(float * __restrict p_out_f32, const float * __rest
 
     for(co = 0; co < chn_out_s32; co++)
     {
-        for(j = 0; j < hei_out_s32; j++)
+        for(ci = 0; ci < chn_in_s32; ci++)
         {
-            for(i = 0; i < wid_out_s32; i++)
+            for(kh = 0; kh < ker_s32; kh++)
             {
-                acc_f32 = 0.0f;
-                for(ci = 0; ci < chn_in_s32; ci++)
+                for(kw = 0; kw < ker_s32; kw++)
                 {
-                    for(kh = 0; kh < ker_s32; kh++)
+                    for(j = 0; j < hei_out_s32; j++)
                     {
-                        for(kw = 0; kw < ker_s32; kw++)
+                        for(i = 0; i < wid_out_s32; i++)
                         {
+                            acc_f32 = p_out_f32[co * wid_out_s32 * hei_out_s32 + j * wid_out_s32 + i];
+
                             x = (i - pad_s32) + kw;
                             y = (j - pad_s32) + kh;
 
@@ -927,10 +1031,11 @@ static void convolution_ref_c(float * __restrict p_out_f32, const float * __rest
                                 fprintf(fp_fprintf_debug, "kw: %d, kh: %d, ci: %d, i: %d, j: %d, in: %f, wei: %f, acc: %f\n", kw, kh, ci, i, j, src_f32, wei_f32, acc_f32);
                             }
 #endif
+
+                            p_out_f32[co * wid_out_s32 * hei_out_s32 + j * wid_out_s32 + i] = acc_f32;
                         }
                     }
                 }
-                p_out_f32[co * wid_out_s32 * hei_out_s32 + j * wid_out_s32 + i] = acc_f32;
             }
         }
     } 
