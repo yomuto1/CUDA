@@ -743,7 +743,7 @@ __global__ void convolution_kernel(float *p_out_f32, const float *p_in_f32, cons
 {
     //printf("in convolution_kernel: %d, %d, %d, %d, %d, %d, %d, %d\n", chn_in_s32, wid_in_s32, hei_in_s32, chn_out_s32, wid_out_s32, hei_out_s32, ker_s32, pad_s32);
 
-#if 0
+#if 1
     int threadIdx_x_s32 = threadIdx.x;
     int threadIdx_y_s32 = threadIdx.y;
     int co = blockIdx.x * blockDim.x + threadIdx_x_s32;
@@ -751,7 +751,7 @@ __global__ void convolution_kernel(float *p_out_f32, const float *p_in_f32, cons
     int ci, kw, kh, x, y, j;
     float wei_f32;
     float acc_f32;
-    __shared__ float gpu_sa_src_f32[(WID_SIZED + 2) * 3];
+    __shared__ float gpu_sa_src_f32[(WID_SIZED + 2) * 4];
     __shared__ float gpu_sa_wei_f32[3 * 3 * 3 * 32];
 
     if(co < chn_out_s32)
@@ -778,15 +778,15 @@ __global__ void convolution_kernel(float *p_out_f32, const float *p_in_f32, cons
             {
                 for(kw = 0; kw < ker_s32; kw++)
                 {
-                    for(j = 0; j < hei_out_s32; j++)
+                    for(j = 0; j < hei_out_s32; j+=4)
                     {
                         if(i < wid_out_s32)
                         {
-#if 0
+#if 1
                             x = (i - pad_s32) + kw;
                             y = (j - pad_s32) + kh;
 
-                            if((x >= 0) && (x < wid_in_s32) && (y >= 0) && (y < hei_in_s32))
+                            if((x >= 0) && (x < wid_in_s32) && (y >= 0))
                             {
                                 gpu_sa_src_f32[i] = p_in_f32[ci * wid_in_s32 * hei_in_s32 + y * wid_in_s32 + x];
                             }
@@ -795,22 +795,74 @@ __global__ void convolution_kernel(float *p_out_f32, const float *p_in_f32, cons
                                 gpu_sa_src_f32[i] = 0.f;
                             }
 
+                            y = (j + 1 - pad_s32) + kh;
+
+                            if((x >= 0) && (x < wid_in_s32))
+                            {
+                                gpu_sa_src_f32[i + (WID_SIZED + 2)] = p_in_f32[ci * wid_in_s32 * hei_in_s32 + y * wid_in_s32 + x];
+                            }
+                            else
+                            {
+                                gpu_sa_src_f32[i + (WID_SIZED + 2)] = 0.f;
+                            }
+
+                            y = (j + 2 - pad_s32) + kh;
+
+                            if((x >= 0) && (x < wid_in_s32))
+                            {
+                                gpu_sa_src_f32[i + 2 * (WID_SIZED + 2)] = p_in_f32[ci * wid_in_s32 * hei_in_s32 + y * wid_in_s32 + x];
+                            }
+                            else
+                            {
+                                gpu_sa_src_f32[i + 2 * (WID_SIZED + 2)] = 0.f;
+                            }
+
+                            y = (j + 3 - pad_s32) + kh;
+
+                            if((x >= 0) && (x < wid_in_s32) && (y < hei_in_s32))
+                            {
+                                gpu_sa_src_f32[i + 3 * (WID_SIZED + 2)] = p_in_f32[ci * wid_in_s32 * hei_in_s32 + y * wid_in_s32 + x];
+                            }
+                            else
+                            {
+                                gpu_sa_src_f32[i + 3 * (WID_SIZED + 2)] = 0.f;
+                            }
+
                             __syncthreads();
 #endif
-
-                            x = (i - pad_s32) + kw;
-                            y = (j - pad_s32) + kh;
 
                             wei_f32 = gpu_sa_wei_f32[co * ker_s32 * ker_s32 * chn_in_s32 + ci * ker_s32 * ker_s32 + kh * ker_s32 + kw];
 
                             acc_f32 = p_out_f32[co * wid_out_s32 * hei_out_s32 + j * wid_out_s32 + i];
 
+#if 0
                             if((x >= 0) && (x < wid_in_s32) && (y >= 0) && (y < hei_in_s32))
                             {
                                 acc_f32 += p_in_f32[ci * wid_in_s32 * hei_in_s32 + (j - pad_s32 + kh) * wid_in_s32 + (i - pad_s32) + kw] * wei_f32;
                             }
+#else
+                            acc_f32 += gpu_sa_src_f32[i] * wei_f32;
+#endif
                             
                             p_out_f32[co * wid_out_s32 * hei_out_s32 + j * wid_out_s32 + i] = acc_f32;
+
+                            acc_f32 = p_out_f32[co * wid_out_s32 * hei_out_s32 + (j + 1) * wid_out_s32 + i];
+
+                            acc_f32 += gpu_sa_src_f32[i + (WID_SIZED + 2)] * wei_f32;
+                            
+                            p_out_f32[co * wid_out_s32 * hei_out_s32 + (j + 1) * wid_out_s32 + i] = acc_f32;
+
+                            acc_f32 = p_out_f32[co * wid_out_s32 * hei_out_s32 + (j + 2) * wid_out_s32 + i];
+
+                            acc_f32 += gpu_sa_src_f32[i + 2 * (WID_SIZED + 2)] * wei_f32;
+                            
+                            p_out_f32[co * wid_out_s32 * hei_out_s32 + (j + 2) * wid_out_s32 + i] = acc_f32;
+
+                            acc_f32 = p_out_f32[co * wid_out_s32 * hei_out_s32 + (j + 3) * wid_out_s32 + i];
+
+                            acc_f32 += gpu_sa_src_f32[i + 3 * (WID_SIZED + 2)] * wei_f32;
+                            
+                            p_out_f32[co * wid_out_s32 * hei_out_s32 + (j + 3) * wid_out_s32 + i] = acc_f32;
                         }
                     }
                 }
@@ -898,7 +950,7 @@ __global__ void convolution_kernel(float *p_out_f32, const float *p_in_f32, cons
 
 static void forward_convolutional_layer_gpu(float *l_output_gpu, float *input_gpu, float *l_weights_gpu, float *workspace_gpu, float *mean_gpu, float *variance_gpu, float *scales_gpu, float *biases_gpu, int l_outputs, int l_n, int l_size, int l_c, int l_out_w, int l_out_h, int l_w, int l_h, int l_stride, int l_pad, int l_batch_normalize, ACTIVATION l_activation)
 {
-#if 1
+#if 0
     fill_gpu(l_outputs, 0, l_output_gpu, 1);
 
 #ifdef CUDNN
@@ -931,7 +983,7 @@ static void forward_convolutional_layer_gpu(float *l_output_gpu, float *input_gp
 #endif
 #endif
 
-#if 0
+#if 1
     {
         static float sa_src_f32[WID_SIZED * HEI_SIZED * CHN_SRC];
         static float sa_dst_f32[WID_SIZED * HEI_SIZED * 32] = { 0.f, };
@@ -942,8 +994,13 @@ static void forward_convolutional_layer_gpu(float *l_output_gpu, float *input_gp
         dim3 threadsperblock(2048); // 2048
         dim3 numblocks(32); // 32
 #else
+#if 0
         dim3 threadsperblock(32, 32); // 2048
         dim3 numblocks(19, 19); // 32
+#else
+        dim3 threadsperblock(1, 32); // 2048
+        dim3 numblocks(32, 19); // 32
+#endif
 #endif
 
 #if 0
@@ -959,7 +1016,7 @@ static void forward_convolutional_layer_gpu(float *l_output_gpu, float *input_gp
 #else
         convolution_kernel<<<threadsperblock, numblocks>>>(l_output_gpu, input_gpu, l_weights_gpu, l_c, l_w, l_h, 32, l_out_w, l_out_h, l_size, l_pad);
 
-        //cudaMemcpy(sa_dst_f32, l_output_gpu, l_out_w * l_out_h * 32 * sizeof(float), cudaMemcpyDeviceToHost);
+        cudaMemcpy(sa_dst_f32, l_output_gpu, l_out_w * l_out_h * 32 * sizeof(float), cudaMemcpyDeviceToHost);
 #endif
 
 #if 0
